@@ -22,8 +22,42 @@ struct AIProvider: Identifiable, Hashable {
 }
 
 enum AIDetector {
-    /// Search common locations for a CLI binary. PATH is often empty in bundled GUI apps.
-    static func which(_ name: String) -> String? {
+    // Session cache — avoid spawning login-shell zsh subprocess for every
+    // missing binary on every AI tab open. `detect()` loops over 10+ CLI names,
+    // and without this cache each open takes ~0.5–1.2 s on a machine missing
+    // most of them.
+    nonisolated(unsafe) private static var whichCache: [String: String?] = [:]
+    private static let whichCacheLock = NSLock()
+
+    /// Clears the which() cache so the next detect() re-scans from scratch.
+    /// Wire to the manual "Refresh" button.
+    static func invalidateWhichCache() {
+        whichCacheLock.lock()
+        whichCache.removeAll()
+        whichCacheLock.unlock()
+    }
+
+    /// Search common locations for a CLI binary. PATH is often empty in bundled
+    /// GUI apps. Pass `useCache: false` to force a fresh probe.
+    static func which(_ name: String, useCache: Bool = true) -> String? {
+        if useCache {
+            whichCacheLock.lock()
+            if let cached = whichCache[name] {
+                whichCacheLock.unlock()
+                return cached
+            }
+            whichCacheLock.unlock()
+        }
+
+        let result = whichUncached(name)
+
+        whichCacheLock.lock()
+        whichCache[name] = result
+        whichCacheLock.unlock()
+        return result
+    }
+
+    private static func whichUncached(_ name: String) -> String? {
         let candidates = [
             "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin",
             NSString("~/.local/bin").expandingTildeInPath,

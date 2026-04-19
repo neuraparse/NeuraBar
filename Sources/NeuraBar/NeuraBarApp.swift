@@ -10,6 +10,7 @@ struct NeuraBarApp: App {
             MainView()
                 .environmentObject(store)
                 .environmentObject(l10n)
+                .environmentObject(store.conversations)
                 .frame(width: NB.panelWidth, height: NB.panelHeight)
         } label: {
             MenuBarIconView()

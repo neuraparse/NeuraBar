@@ -55,8 +55,13 @@ struct AssistantView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var l10n: Localization
     @EnvironmentObject var store: AppStore
+    /// Observed directly so streaming chunks propagate in real time instead
+    /// of piggy-backing on the 1 s elapsed timer.
+    @EnvironmentObject var conversations: AIConversationStore
+
     @State private var input: String = ""
     @State private var sending = false
+    @State private var streamStartedAt: Date?
     @State private var error: String?
     @State private var providers: [AIProvider] = []
     @State private var selected: AIProvider?
@@ -64,22 +69,18 @@ struct AssistantView: View {
     @State private var showProviderPicker = false
     @State private var showSlashMenu = false
     @State private var pending: PendingApproval?
-    @State private var elapsedTick = 0  // forces re-render for live elapsed counter
     @State private var showHistoryPicker = false
     @State private var renamingID: UUID?
     @State private var renameBuffer = ""
+    @State private var isRefreshingProviders = false
 
     /// Below this width the conversation sidebar collapses into an overlay
     /// picker — keeps the 420 px popover usable.
     private static let splitThreshold: CGFloat = 520
 
-    /// Reads straight from the conversation store — views always see the
-    /// current persisted transcript.
     private var messages: [ChatMessage] {
-        store.conversations.currentMessages
+        conversations.currentMessages
     }
-
-    private let elapsedTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     /// Destructive automations that always require explicit approval before running.
     private static let destructiveAutomations: Set<String> = [
@@ -113,12 +114,11 @@ struct AssistantView: View {
             .animation(.spring(duration: 0.22, bounce: 0.15), value: isWide)
             .animation(.spring(duration: 0.22, bounce: 0.15), value: showHistoryPicker)
         }
-        .onAppear(perform: refreshProviders)
-        .onChange(of: settings.data.claudeAPIKey) { refreshProviders() }
-        .onChange(of: settings.data.openaiAPIKey) { refreshProviders() }
-        .onReceive(elapsedTimer) { _ in
-            if sending { elapsedTick &+= 1 }
+        .onAppear {
+            refreshProviders(useCache: true)
         }
+        .onChange(of: settings.data.claudeAPIKey) { refreshProviders(useCache: true) }
+        .onChange(of: settings.data.openaiAPIKey) { refreshProviders(useCache: true) }
         .onChange(of: input) { _, newValue in
             let trimmed = newValue.trimmingCharacters(in: .whitespaces)
             showSlashMenu = trimmed.hasPrefix("/") && !trimmed.contains(" ")
@@ -166,13 +166,13 @@ struct AssistantView: View {
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    if store.conversations.items.isEmpty {
+                    if conversations.items.isEmpty {
                         Text(l10n.t(.ai_noConversations))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .padding(.top, 12)
                     } else {
-                        ForEach(store.conversations.sorted) { conv in
+                        ForEach(conversations.sorted) { conv in
                             conversationRow(conv)
                                 .transition(.asymmetric(
                                     insertion: .opacity.combined(with: .offset(y: -3)),
@@ -181,16 +181,16 @@ struct AssistantView: View {
                         }
                     }
                 }
-                .animation(.spring(duration: 0.26, bounce: 0.15), value: store.conversations.items)
+                .animation(.spring(duration: 0.26, bounce: 0.15), value: conversations.items.count)
             }
         }
     }
 
     private func conversationRow(_ conv: AIConversation) -> some View {
-        let selected = store.conversations.currentID == conv.id
+        let selected = conversations.currentID == conv.id
         return Button {
             withAnimation(.spring(duration: 0.2, bounce: 0.15)) {
-                store.conversations.currentID = conv.id
+                conversations.currentID = conv.id
             }
         } label: {
             HStack(alignment: .top, spacing: 5) {
@@ -229,18 +229,18 @@ struct AssistantView: View {
     @ViewBuilder
     private func conversationContextMenu(_ conv: AIConversation) -> some View {
         Button(conv.pinned ? l10n.t(.ai_unpin) : l10n.t(.ai_pin)) {
-            store.conversations.togglePin(conv.id)
+            conversations.togglePin(conv.id)
         }
         Button(l10n.t(.ai_rename)) {
             renamingID = conv.id
             renameBuffer = conv.title
         }
         Button(l10n.t(.ai_duplicate)) {
-            store.conversations.duplicate(conv.id)
+            _ = conversations.duplicate(conv.id)
         }
         Divider()
         Button(l10n.t(.delete), role: .destructive) {
-            store.conversations.delete(conv.id)
+            conversations.delete(conv.id)
         }
     }
 
@@ -256,7 +256,7 @@ struct AssistantView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .font(.system(size: 9, weight: .medium))
-                    Text(store.conversations.current?.title ?? l10n.t(.ai_newConversation))
+                    Text(conversations.current?.title ?? l10n.t(.ai_newConversation))
                         .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
                     Image(systemName: showHistoryPicker ? "chevron.up" : "chevron.down")
@@ -279,7 +279,7 @@ struct AssistantView: View {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(Color.accentColor)
-                    .symbolEffect(.bounce, value: store.conversations.items.count)
+                    .symbolEffect(.bounce, value: conversations.items.count)
             }
             .buttonStyle(PressableStyle())
             .help(l10n.t(.ai_newConversation))
@@ -290,10 +290,10 @@ struct AssistantView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(store.conversations.sorted) { conv in
+                    ForEach(conversations.sorted) { conv in
                         Button {
                             withAnimation(.spring(duration: 0.2)) {
-                                store.conversations.currentID = conv.id
+                                conversations.currentID = conv.id
                                 showHistoryPicker = false
                             }
                         } label: {
@@ -315,7 +315,7 @@ struct AssistantView: View {
                                     }
                                 }
                                 Spacer()
-                                if store.conversations.currentID == conv.id {
+                                if conversations.currentID == conv.id {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 9, weight: .bold))
                                         .foregroundStyle(Color.accentColor)
@@ -329,7 +329,7 @@ struct AssistantView: View {
                         .nbHoverHighlight(cornerRadius: 5, intensity: 0.08)
                         .contextMenu { conversationContextMenu(conv) }
                     }
-                    if store.conversations.items.isEmpty {
+                    if conversations.items.isEmpty {
                         Text(l10n.t(.ai_noConversations))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -368,7 +368,7 @@ struct AssistantView: View {
 
     private func newConversation() {
         withAnimation(.spring(duration: 0.24, bounce: 0.2)) {
-            store.conversations.newConversation(providerName: selected?.name)
+            conversations.newConversation(providerName: selected?.name)
             showHistoryPicker = false
             input = ""
             error = nil
@@ -417,13 +417,21 @@ struct AssistantView: View {
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
             Button {
-                refreshProviders()
+                refreshProviders(useCache: false)
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isRefreshingProviders ? 360 : 0))
+                    .animation(
+                        isRefreshingProviders
+                        ? .linear(duration: 0.8).repeatForever(autoreverses: false)
+                        : .default,
+                        value: isRefreshingProviders
+                    )
             }
             .buttonStyle(.plain)
+            .disabled(isRefreshingProviders)
             .help(l10n.t(.ai_rescan))
         }
     }
@@ -518,7 +526,6 @@ struct AssistantView: View {
                     }
                     if sending {
                         sendingIndicator
-                            .id(elapsedTick) // force refresh each second
                     }
                     if let err = error {
                         Text(err)
@@ -577,10 +584,15 @@ struct AssistantView: View {
     }
 
     // MARK: - Sending indicator (rich)
+    //
+    // Uses TimelineView for the live elapsed counter — SwiftUI handles the
+    // 1 s tick internally and invalidates only the Text, not the whole view
+    // tree. Previously an always-running Timer forced the whole AssistantView
+    // to re-render once per second, which compounded with the lack of
+    // explicit conversation observation to make streaming feel sluggish.
 
     private var sendingIndicator: some View {
-        let elapsed = messages.last(where: { $0.role == .assistant })?.startedAt ?? Date()
-        let secs = Int(Date().timeIntervalSince(elapsed))
+        let start = streamStartedAt ?? Date()
         return HStack(spacing: 7) {
             BrandPulse(size: 14)
             Text(l10n.t(.thinking))
@@ -591,10 +603,14 @@ struct AssistantView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            if secs > 0 {
-                Text("· \(secs)s")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+            TimelineView(.periodic(from: start, by: 1)) { context in
+                let secs = Int(context.date.timeIntervalSince(start))
+                if secs > 0 {
+                    Text("· \(secs)s")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .contentTransition(.numericText())
+                }
             }
             Spacer()
             if runningProcess != nil {
@@ -792,13 +808,13 @@ struct AssistantView: View {
             text: l10n.t(def.titleKey),
             providerID: def.id
         )
-        store.conversations.append(placeholder, providerName: selected?.name)
+        conversations.append(placeholder, providerName: selected?.name)
         let placeholderID = placeholder.id
 
         Task { @MainActor in
             await store.automation.run(def, l10n: l10n)
             if let run = store.automation.history.first(where: { $0.taskID == def.id }) {
-                store.conversations.updateMessage(id: placeholderID) { $0.automationRun = run }
+                conversations.updateMessage(id: placeholderID) { $0.automationRun = run }
             }
         }
     }
@@ -841,14 +857,29 @@ struct AssistantView: View {
 
     // MARK: - Actions
 
-    private func refreshProviders() {
-        let list = AIDetector.detect(settings: settings.data)
-        self.providers = list
-        if let pref = list.first(where: { $0.id == settings.data.preferredProviderID }) {
-            self.selected = pref
-        } else {
-            self.selected = list.first
-            if let first = list.first { settings.data.preferredProviderID = first.id }
+    /// Detect providers off the main thread. `AIDetector.which()` may spawn
+    /// login-shell zsh subprocesses for missing CLIs; doing that synchronously
+    /// in `onAppear` was blocking the UI for ~0.5–1.2 s on first open.
+    /// Pass `useCache: false` for an explicit user-driven refresh.
+    private func refreshProviders(useCache: Bool = true) {
+        if isRefreshingProviders { return }
+        isRefreshingProviders = true
+        if !useCache { AIDetector.invalidateWhichCache() }
+
+        // Capture immutable snapshot for the background task.
+        let settingsData = settings.data
+        Task.detached(priority: .userInitiated) {
+            let list = AIDetector.detect(settings: settingsData)
+            await MainActor.run {
+                self.providers = list
+                if let pref = list.first(where: { $0.id == self.settings.data.preferredProviderID }) {
+                    self.selected = pref
+                } else {
+                    self.selected = list.first
+                    if let first = list.first { self.settings.data.preferredProviderID = first.id }
+                }
+                self.isRefreshingProviders = false
+            }
         }
     }
 
@@ -856,6 +887,7 @@ struct AssistantView: View {
         runningProcess?.terminate()
         runningProcess = nil
         sending = false
+        streamStartedAt = nil
     }
 
     private func send() {
@@ -872,48 +904,49 @@ struct AssistantView: View {
                 .replacingOccurrences(of: "automate ", with: "")
                 .trimmingCharacters(in: .whitespaces)
             if let def = AutomationCatalog.all.first(where: { $0.id.lowercased() == token.lowercased() }) {
-                store.conversations.append(ChatMessage(role: .user, text: text), providerName: selected?.name)
+                conversations.append(ChatMessage(role: .user, text: text), providerName: selected?.name)
                 requestAutomation(def, reason: "You ran")
                 return
             }
-            store.conversations.append(ChatMessage(
+            conversations.append(ChatMessage(
                 role: .system,
                 text: "Unknown command: /\(token). Try /screenshots, /trash, /heic …"
             ))
             return
         }
 
-        store.conversations.append(ChatMessage(role: .user, text: text), providerName: provider.name)
+        conversations.append(ChatMessage(role: .user, text: text), providerName: provider.name)
 
         switch provider.kind {
         case .desktop:
             AIRun.openDesktop(provider: provider, prompt: text)
-            store.conversations.append(ChatMessage(
+            conversations.append(ChatMessage(
                 role: .system,
                 text: l10n.t(.ai_desktopOpened, provider.name),
                 providerID: provider.id
             ))
         case .cli:
             let msg = ChatMessage(role: .assistant, text: "", providerID: provider.id)
-            store.conversations.append(msg, providerName: provider.name)
+            conversations.append(msg, providerName: provider.name)
             let msgID = msg.id
+            streamStartedAt = Date()
             sending = true
             let proc = AIRun.streamCLI(
                 provider: provider,
                 prompt: text,
                 settings: settings.data,
                 onChunk: { chunk in
-                    store.conversations.updateMessage(id: msgID) { $0.text += chunk }
+                    conversations.updateMessage(id: msgID) { $0.text += chunk }
                 },
                 onDone: { err in
                     sending = false
+                    streamStartedAt = nil
                     runningProcess = nil
                     if let err = err {
-                        // Only surface error if we didn't get any output
-                        if let currentMsg = store.conversations.currentMessages.first(where: { $0.id == msgID }),
+                        if let currentMsg = conversations.currentMessages.first(where: { $0.id == msgID }),
                            currentMsg.text.isEmpty {
                             error = err.localizedDescription
-                            store.conversations.removeMessage(id: msgID)
+                            conversations.removeMessage(id: msgID)
                         }
                     }
                 }
@@ -921,8 +954,9 @@ struct AssistantView: View {
             runningProcess = proc
 
         case .api:
+            streamStartedAt = Date()
             sending = true
-            let history = store.conversations.currentMessages
+            let history = conversations.currentMessages
                 .filter { $0.role != .system && $0.role != .automation }
                 .map { ($0.role == .user ? "user" : "assistant", $0.text) }
 
@@ -943,16 +977,18 @@ struct AssistantView: View {
                         )
                     }
                     await MainActor.run {
-                        store.conversations.append(
+                        conversations.append(
                             ChatMessage(role: .assistant, text: reply, providerID: provider.id),
                             providerName: provider.name
                         )
                         sending = false
+                        streamStartedAt = nil
                     }
                 } catch {
                     await MainActor.run {
                         self.error = error.localizedDescription
                         sending = false
+                        streamStartedAt = nil
                     }
                 }
             }

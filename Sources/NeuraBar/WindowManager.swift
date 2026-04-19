@@ -56,6 +56,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         let root = PoppedMainView()
             .environmentObject(store)
             .environmentObject(l10n)
+            .environmentObject(store.conversations)
             .environmentObject(self)
             .frame(minWidth: 560, minHeight: 560)
 
