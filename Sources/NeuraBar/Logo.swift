@@ -113,6 +113,9 @@ struct MenuBarIconView: View {
     /// Live system alert level drives the "critical" (red glyph) and "warning"
     /// (orange dot) persistent states.
     @EnvironmentObject var system: SystemMonitor
+    /// Pomodoro owns an active-session indicator: while running, the menu
+    /// bar glyph swaps to a phase-tinted timer.
+    @EnvironmentObject var pomodoro: PomodoroTimer
     /// Short-lived events (copy / recording saved / automation done) flash
     /// a colored glyph over the icon for ~1.4 s before reverting.
     @ObservedObject var events = MenuBarStatusCoordinator.shared
@@ -120,9 +123,9 @@ struct MenuBarIconView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             primaryGlyph
-            // Warning-level badge: a small orange dot sits on top of the base
-            // glyph. Critical state replaces the glyph entirely (see above),
-            // so this only fires for warnings.
+            // Warning-level badge: a small orange dot sits on top of whichever
+            // base glyph is showing. Critical state replaces the glyph
+            // entirely (see `primaryGlyph`), so this only fires for warnings.
             if system.alertLevel == .warning && events.currentEvent == nil {
                 Circle()
                     .fill(Color.orange)
@@ -134,12 +137,15 @@ struct MenuBarIconView: View {
         .frame(width: 22, height: 22)
         .animation(.spring(duration: 0.28, bounce: 0.35), value: events.currentEvent)
         .animation(.easeInOut(duration: 0.2), value: system.alertLevel)
+        .animation(.easeInOut(duration: 0.22), value: pomodoro.running)
+        .animation(.easeInOut(duration: 0.22), value: pomodoro.phase)
     }
 
-    /// What the main icon looks like at a given moment. Precedence:
-    ///   1. A flashing event (copy, recording saved, automation done/failed)
+    /// What the main icon looks like at a given moment. Precedence, high→low:
+    ///   1. A flashing event (copy / recording saved / automation done / failed)
     ///   2. The system is critical (pulsing red warning triangle)
-    ///   3. The baseline template NeuraMark
+    ///   3. Pomodoro is running (phase-tinted timer glyph with variable-color pulse)
+    ///   4. The baseline template NeuraMark
     @ViewBuilder
     private var primaryGlyph: some View {
         if let event = events.currentEvent {
@@ -154,11 +160,27 @@ struct MenuBarIconView: View {
                 .foregroundStyle(.red)
                 .symbolEffect(.pulse, options: .repeating)
                 .transition(.scale.combined(with: .opacity))
+        } else if pomodoro.running {
+            Image(systemName: "timer")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(phaseTint(for: pomodoro.phase))
+                .symbolEffect(.variableColor.iterative, options: .repeating)
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
         } else if let nsImage = Self.templateImage() {
             Image(nsImage: nsImage)
                 .transition(.opacity)
         } else {
             Image(systemName: "sparkles")
+        }
+    }
+
+    /// Matches the colors used by the Focus tab's timer dial gradient, so the
+    /// two surfaces feel like the same thing.
+    private func phaseTint(for phase: PomodoroTimer.Phase) -> Color {
+        switch phase {
+        case .focus, .idle: return .purple
+        case .shortBreak:   return .green
+        case .longBreak:    return .teal
         }
     }
 

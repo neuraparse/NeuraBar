@@ -5,6 +5,8 @@ struct NeuraBarApp: App {
     @StateObject private var store = AppStore()
     @StateObject private var l10n = Localization.shared
 
+    @StateObject private var permissions = PermissionsStore.shared
+
     var body: some Scene {
         MenuBarExtra {
             MainView()
@@ -12,10 +14,12 @@ struct NeuraBarApp: App {
                 .environmentObject(l10n)
                 .environmentObject(store.conversations)
                 .environmentObject(store.system)
+                .environmentObject(permissions)
                 .frame(width: NB.panelWidth, height: NB.panelHeight)
         } label: {
             MenuBarIconView()
                 .environmentObject(store.system)
+                .environmentObject(store.pomodoro)
         }
         .menuBarExtraStyle(.window)
     }

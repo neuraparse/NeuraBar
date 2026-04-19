@@ -40,6 +40,16 @@ enum Loc: String {
     case record_opt_mic, record_opt_cursor, record_opt_notify
     case record_input, record_savedToast
     case record_notif_audioSaved, record_notif_screenSaved
+    case record_src_title, record_src_subtitle
+    case record_src_fullScreen, record_src_fullScreen_hint
+    case record_src_area, record_src_area_hint
+    case record_src_systemPicker, record_src_systemPicker_hint
+
+    // Permissions
+    case perm_allow, perm_openSettings
+    case perm_screen_title, perm_screen_request_body, perm_screen_denied_body
+    case perm_mic_title, perm_mic_request_body, perm_mic_denied_body
+    case perm_restart_title, perm_restart_body, perm_restart_cta
 
     // Common
     case save, cancel, close, add, remove, delete, edit, done
@@ -190,6 +200,26 @@ private enum Dict {
         .record_savedToast: "Recording saved",
         .record_notif_audioSaved: "Audio recording saved",
         .record_notif_screenSaved: "Screen recording saved",
+        .record_src_title: "Record screen",
+        .record_src_subtitle: "NeuraBar hides itself while recording",
+        .record_src_fullScreen: "Full screen",
+        .record_src_fullScreen_hint: "Capture the entire primary display",
+        .record_src_area: "Area",
+        .record_src_area_hint: "Opens macOS's area-recording toolbar",
+        .record_src_systemPicker: "macOS Screenshot toolbar",
+        .record_src_systemPicker_hint: "Opens the built-in picker for window / area with more controls",
+
+        .perm_allow: "Allow",
+        .perm_openSettings: "Open System Settings",
+        .perm_screen_title: "Screen recording",
+        .perm_screen_request_body: "Grant NeuraBar permission to capture your screen.",
+        .perm_screen_denied_body: "Permission denied. Flip the toggle next to NeuraBar in Privacy → Screen & System Audio.",
+        .perm_mic_title: "Microphone",
+        .perm_mic_request_body: "Grant NeuraBar permission to record audio.",
+        .perm_mic_denied_body: "Permission denied. Enable NeuraBar under Privacy → Microphone.",
+        .perm_restart_title: "Restart to finish",
+        .perm_restart_body: "macOS cached the old permission state. Relaunch NeuraBar so capture works.",
+        .perm_restart_cta: "Restart",
 
         .save: "Save", .cancel: "Cancel", .close: "Close", .add: "Add",
         .remove: "Remove", .delete: "Delete", .edit: "Edit", .done: "Done",
@@ -481,6 +511,26 @@ private enum Dict {
         .record_savedToast: "Kayıt kaydedildi",
         .record_notif_audioSaved: "Ses kaydı kaydedildi",
         .record_notif_screenSaved: "Ekran kaydı kaydedildi",
+        .record_src_title: "Ekran kaydı",
+        .record_src_subtitle: "NeuraBar kayıt süresince kendini gizler",
+        .record_src_fullScreen: "Tam ekran",
+        .record_src_fullScreen_hint: "Birincil ekranın tamamını yakala",
+        .record_src_area: "Alan",
+        .record_src_area_hint: "macOS'un alan-kayıt aracını açar",
+        .record_src_systemPicker: "macOS Ekran Görüntüsü aracı",
+        .record_src_systemPicker_hint: "Pencere / alan için dahili macOS seçiciyi aç",
+
+        .perm_allow: "İzin ver",
+        .perm_openSettings: "Sistem Ayarları'nı aç",
+        .perm_screen_title: "Ekran kaydı",
+        .perm_screen_request_body: "NeuraBar'a ekranı yakalaması için izin ver.",
+        .perm_screen_denied_body: "İzin reddedildi. Gizlilik → Ekran & Sistem Sesi'nde NeuraBar'ı aç.",
+        .perm_mic_title: "Mikrofon",
+        .perm_mic_request_body: "NeuraBar'a ses kaydı için izin ver.",
+        .perm_mic_denied_body: "İzin reddedildi. Gizlilik → Mikrofon'da NeuraBar'ı aç.",
+        .perm_restart_title: "Bitirmek için yeniden başlat",
+        .perm_restart_body: "macOS eski izin durumunu önbelleklemiş. NeuraBar'ı yeniden başlatınca çalışır.",
+        .perm_restart_cta: "Yeniden başlat",
 
         .save: "Kaydet", .cancel: "İptal", .close: "Kapat", .add: "Ekle",
         .remove: "Kaldır", .delete: "Sil", .edit: "Düzenle", .done: "Tamam",

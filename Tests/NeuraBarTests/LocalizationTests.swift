@@ -106,7 +106,15 @@ final class LocalizationTests: XCTestCase {
             .record_opt_mic, .record_opt_cursor, .record_opt_notify,
             .record_input, .record_savedToast,
             .record_notif_audioSaved, .record_notif_screenSaved,
-            .clip_captured
+            .clip_captured,
+            .record_src_title, .record_src_subtitle,
+            .record_src_fullScreen, .record_src_fullScreen_hint,
+            .record_src_area, .record_src_area_hint,
+            .record_src_systemPicker, .record_src_systemPicker_hint,
+            .perm_allow, .perm_openSettings,
+            .perm_screen_title, .perm_screen_request_body, .perm_screen_denied_body,
+            .perm_mic_title, .perm_mic_request_body, .perm_mic_denied_body,
+            .perm_restart_title, .perm_restart_body, .perm_restart_cta
         ]
         for key in allCases {
             let value = l.t(key)

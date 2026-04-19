@@ -47,6 +47,37 @@ struct Recording: Identifiable, Codable, Equatable {
 
 // MARK: - Store
 
+/// What the user wants to capture. Selected from the Start Recording sheet.
+enum RecordingSource: String, Equatable {
+    case fullScreen
+    case area
+    case systemPicker  // hands off to the built-in macOS Screenshot.app
+
+    var icon: String {
+        switch self {
+        case .fullScreen:   return "rectangle.on.rectangle"
+        case .area:         return "selection.pin.in.out"
+        case .systemPicker: return "macwindow.and.cursorarrow"
+        }
+    }
+
+    var titleKey: Loc {
+        switch self {
+        case .fullScreen:   return .record_src_fullScreen
+        case .area:         return .record_src_area
+        case .systemPicker: return .record_src_systemPicker
+        }
+    }
+
+    var subtitleKey: Loc {
+        switch self {
+        case .fullScreen:   return .record_src_fullScreen_hint
+        case .area:         return .record_src_area_hint
+        case .systemPicker: return .record_src_systemPicker_hint
+        }
+    }
+}
+
 struct RecordingOptions: Codable, Equatable {
     var includeMicrophone: Bool = true
     var captureCursor: Bool = true
@@ -115,8 +146,19 @@ final class RecordingStore: NSObject, ObservableObject {
 
     // MARK: Audio
 
-    func startAudio() {
-        guard !isRecordingAudio else { return }
+    /// Attempts to start an audio recording. Returns false if permission is
+    /// denied / not yet determined so the UI can show the permission banner.
+    /// The caller should call `requestMicAccess()` first (async) to prompt
+    /// the user before reaching this.
+    @discardableResult
+    func startAudio() -> Bool {
+        guard !isRecordingAudio else { return false }
+        // Belt-and-braces: if we somehow reach here without mic access,
+        // bail out cleanly instead of recording a silent file.
+        guard PermissionsService.microphone == .authorized else {
+            lastError = "Microphone permission not granted."
+            return false
+        }
         let url = Recording.newFilePath(kind: .audio)
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -134,8 +176,10 @@ final class RecordingStore: NSObject, ObservableObject {
             isRecordingAudio = true
             startTick()
             lastError = nil
+            return true
         } catch {
             lastError = "Audio: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -169,25 +213,64 @@ final class RecordingStore: NSObject, ObservableObject {
 
     // MARK: Screen
 
-    /// Start a screen recording using the system `screencapture -v` tool.
-    /// Flags are driven by `options`:
-    ///   -v    video mode
-    ///   -x    silent (no shutter beep)
-    ///   -C    capture cursor         (options.captureCursor)
-    ///   -g    capture system + mic audio into the video track
-    ///         (options.includeMicrophone)
-    func startScreen() {
-        guard !isRecordingScreen else { return }
-        let url = Recording.newFilePath(kind: .screen)
-        let task = Process()
-        task.launchPath = "/usr/sbin/screencapture"
-
+    /// Build the `screencapture` argument list for a given source + options.
+    /// Pure — lets tests verify flag plumbing without running the binary.
+    static func screencaptureArguments(
+        source: RecordingSource,
+        outputPath: String,
+        options: RecordingOptions
+    ) -> [String] {
         var args = ["-v", "-x"]
         if options.captureCursor { args.append("-C") }
         if options.includeMicrophone { args.append("-g") }
-        args.append(url.path)
-        task.arguments = args
+        switch source {
+        case .fullScreen:
+            break
+        case .area:
+            // -i prompts for interactive rect selection before the capture
+            // begins. Combined with -v this lets the user drag a region to
+            // record.
+            args.append("-i")
+        case .systemPicker:
+            // Handled out-of-band — we don't launch screencapture for this
+            // path. The caller should open Screenshot.app instead.
+            break
+        }
+        args.append(outputPath)
+        return args
+    }
 
+    /// Attempts to start a screen recording. Returns false when permission
+    /// is not yet granted so the UI can surface the permission banner
+    /// instead of silently spawning a capture that macOS will drop.
+    @discardableResult
+    func startScreen(source: RecordingSource = .fullScreen) -> Bool {
+        guard !isRecordingScreen else { return false }
+        // `screencapture` on macOS 26 doesn't support interactive area
+        // selection + video together (-i and -v conflict). Route area
+        // requests through the OS Screenshot toolbar, which handles all
+        // window + area + full-screen video modes with its own permissions
+        // and UI. systemPicker already goes there too.
+        if source == .systemPicker || source == .area {
+            launchSystemPicker()
+            return true
+        }
+        // Pre-flight screen recording permission. `screencapture -v`
+        // inherits nothing from the parent's entitlements on macOS 26, so
+        // NeuraBar itself must be authorized in System Settings.
+        guard PermissionsService.screenRecording == .authorized else {
+            PermissionsService.requestScreenRecording()
+            lastError = "Screen recording permission not granted."
+            return false
+        }
+        let url = Recording.newFilePath(kind: .screen)
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        task.arguments = Self.screencaptureArguments(
+            source: source,
+            outputPath: url.path,
+            options: options
+        )
         task.standardOutput = Pipe()
         task.standardError = Pipe()
         do {
@@ -198,9 +281,19 @@ final class RecordingStore: NSObject, ObservableObject {
             isRecordingScreen = true
             startTick()
             lastError = nil
+            return true
         } catch {
             lastError = "Screen: \(error.localizedDescription)"
+            return false
         }
+    }
+
+    /// Open the macOS Screenshot.app tool (Cmd+Shift+5 equivalent) — user
+    /// picks window/area/full + starts recording there. We don't track
+    /// output, macOS saves the file to its own default location.
+    private func launchSystemPicker() {
+        let url = URL(fileURLWithPath: "/System/Applications/Utilities/Screenshot.app")
+        NSWorkspace.shared.open(url)
     }
 
     func stopScreen() {

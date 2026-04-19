@@ -57,6 +57,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             .environmentObject(store)
             .environmentObject(l10n)
             .environmentObject(store.conversations)
+            .environmentObject(store.system)
+            .environmentObject(PermissionsStore.shared)
             .environmentObject(self)
             .frame(minWidth: 560, minHeight: 560)
 
@@ -78,6 +80,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     func closePopover() {
         if let pw = popoverWindow, pw.isVisible {
             pw.orderOut(nil)
+        }
+    }
+
+    /// Hide every NeuraBar-owned window so screen recording doesn't capture
+    /// our UI. Used by the Record tab before firing screencapture.
+    @MainActor
+    func hideAllWindows() {
+        closePopover()
+        if let win = mainWindow, win.isVisible {
+            win.orderOut(nil)
         }
     }
 
