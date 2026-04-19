@@ -452,7 +452,7 @@ struct SettingsSheet: View {
             LogoView(size: 72)
             VStack(spacing: 3) {
                 Text(l10n.t(.appName)).font(.system(size: 20, weight: .semibold, design: .rounded))
-                Text(l10n.t(.about_version, "1.2.0")).font(.caption).foregroundStyle(.secondary)
+                Text(l10n.t(.about_version, "1.3.0")).font(.caption).foregroundStyle(.secondary)
             }
             Text(l10n.t(.about_description))
                 .font(.callout)
