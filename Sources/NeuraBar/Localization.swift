@@ -55,9 +55,15 @@ enum Loc: String {
     case palette_startFocus, palette_pauseFocus, palette_clearCompleted, palette_askAI
 
     // Todos
-    case todo_newPlaceholder, todo_tagPlaceholder, todo_empty
+    case todo_newPlaceholder, todo_tagPlaceholder, todo_empty, todo_noMatch
     case todo_filter_active, todo_filter_all, todo_filter_done
     case todo_countActive, todo_clearCompleted
+    case todo_allDone, todo_doneCountSuffix, todo_tip
+    case todo_priority, todo_priority_low, todo_priority_normal, todo_priority_high
+    case todo_dueToday, todo_dueTomorrow, todo_dueNextWeek, todo_dueClear
+    case todo_markDone, todo_markActive
+    case todo_group_overdue, todo_group_today, todo_group_tomorrow
+    case todo_group_thisWeek, todo_group_later, todo_group_noDate, todo_group_completed
 
     // Pomodoro
     case focus_start, focus_resume, focus_pause, focus_reset
@@ -71,13 +77,19 @@ enum Loc: String {
     case shortcut_quickAccess, shortcut_addTitle
     case shortcut_type, shortcut_kind_app, shortcut_kind_folder, shortcut_kind_url, shortcut_kind_command
     case shortcut_name, shortcut_pathOrUrl, shortcut_symbol, shortcut_pick, shortcut_remove
-    case shortcut_empty
+    case shortcut_empty, shortcut_pin, shortcut_unpin, shortcut_launches
 
     // Clipboard
     case clip_empty, clip_searchPlaceholder
 
     // Notes
     case notes_title, notes_titlePlaceholder, notes_untitled, notes_new, notes_empty
+    case notes_welcomeTitle, notes_welcomeBody
+    case notes_pin, notes_unpin, notes_duplicate, notes_copyBody, notes_color
+    case notes_preview, notes_edit
+    case notes_words, notes_chars, notes_minRead, notes_saved
+    case notes_noMatch, notes_newFromClipboard
+    case notes_group_pinned, notes_group_today, notes_group_yesterday, notes_group_thisWeek, notes_group_older
 
     // System
     case sys_cpu, sys_memory, sys_disk, sys_battery, sys_charging, sys_free, sys_used
@@ -183,14 +195,35 @@ private enum Dict {
         .palette_clearCompleted: "Clear completed",
         .palette_askAI: "Ask AI",
 
-        .todo_newPlaceholder: "New task…",
+        .todo_newPlaceholder: "New task… (prefix with ! for high priority)",
         .todo_tagPlaceholder: "tag",
         .todo_empty: "No tasks yet",
+        .todo_noMatch: "No matches",
         .todo_filter_active: "Active",
         .todo_filter_all: "All",
         .todo_filter_done: "Done",
         .todo_countActive: "active",
         .todo_clearCompleted: "Clear done",
+        .todo_allDone: "All done",
+        .todo_doneCountSuffix: "done",
+        .todo_tip: "⌘⇧N new  ·  !prefix for priority  ·  #tag to organize",
+        .todo_priority: "Priority",
+        .todo_priority_low: "Low",
+        .todo_priority_normal: "Normal",
+        .todo_priority_high: "High",
+        .todo_dueToday: "Due today",
+        .todo_dueTomorrow: "Due tomorrow",
+        .todo_dueNextWeek: "Due next week",
+        .todo_dueClear: "Clear due date",
+        .todo_markDone: "Mark done",
+        .todo_markActive: "Mark active",
+        .todo_group_overdue: "Overdue",
+        .todo_group_today: "Today",
+        .todo_group_tomorrow: "Tomorrow",
+        .todo_group_thisWeek: "This week",
+        .todo_group_later: "Later",
+        .todo_group_noDate: "Someday",
+        .todo_group_completed: "Completed",
 
         .focus_start: "Start", .focus_resume: "Resume",
         .focus_pause: "Pause", .focus_reset: "Reset",
@@ -219,6 +252,9 @@ private enum Dict {
         .shortcut_pick: "Choose…",
         .shortcut_remove: "Remove",
         .shortcut_empty: "No shortcuts yet",
+        .shortcut_pin: "Pin to top",
+        .shortcut_unpin: "Unpin",
+        .shortcut_launches: "Launches",
 
         .clip_empty: "Clipboard history is empty\n(copy something → it appears)",
         .clip_searchPlaceholder: "Search…",
@@ -228,6 +264,26 @@ private enum Dict {
         .notes_untitled: "(untitled)",
         .notes_new: "New note",
         .notes_empty: "No notes",
+        .notes_welcomeTitle: "Welcome",
+        .notes_welcomeBody: "Type freely. Markdown works — try **bold**, _italic_, `code`, or a #tag.\n\n⌘⇧N new · ⌘D duplicate · ⌘/ preview · ⌘; timestamp",
+        .notes_pin: "Pin",
+        .notes_unpin: "Unpin",
+        .notes_duplicate: "Duplicate",
+        .notes_copyBody: "Copy body",
+        .notes_color: "Color",
+        .notes_preview: "Preview",
+        .notes_edit: "Edit",
+        .notes_words: "words",
+        .notes_chars: "chars",
+        .notes_minRead: "min read",
+        .notes_saved: "Saved",
+        .notes_noMatch: "No matches",
+        .notes_newFromClipboard: "New from clipboard",
+        .notes_group_pinned: "Pinned",
+        .notes_group_today: "Today",
+        .notes_group_yesterday: "Yesterday",
+        .notes_group_thisWeek: "This week",
+        .notes_group_older: "Older",
 
         .sys_cpu: "CPU", .sys_memory: "Memory", .sys_disk: "Disk",
         .sys_battery: "Battery", .sys_charging: "charging", .sys_free: "free", .sys_used: "used",
@@ -384,14 +440,35 @@ private enum Dict {
         .palette_clearCompleted: "Biteni sil",
         .palette_askAI: "AI'ya sor",
 
-        .todo_newPlaceholder: "Yeni görev…",
+        .todo_newPlaceholder: "Yeni görev… (önemlisi için ! ile başlat)",
         .todo_tagPlaceholder: "etiket",
         .todo_empty: "Hiç görev yok",
+        .todo_noMatch: "Eşleşme yok",
         .todo_filter_active: "Aktif",
         .todo_filter_all: "Hepsi",
         .todo_filter_done: "Bitti",
         .todo_countActive: "aktif",
         .todo_clearCompleted: "Biteni sil",
+        .todo_allDone: "Hepsi bitti",
+        .todo_doneCountSuffix: "tamam",
+        .todo_tip: "⌘⇧N yeni  ·  ! önek öncelik  ·  #etiket düzen",
+        .todo_priority: "Öncelik",
+        .todo_priority_low: "Düşük",
+        .todo_priority_normal: "Normal",
+        .todo_priority_high: "Yüksek",
+        .todo_dueToday: "Bugün",
+        .todo_dueTomorrow: "Yarın",
+        .todo_dueNextWeek: "Gelecek hafta",
+        .todo_dueClear: "Tarihi temizle",
+        .todo_markDone: "Tamamlandı",
+        .todo_markActive: "Aktif yap",
+        .todo_group_overdue: "Gecikmiş",
+        .todo_group_today: "Bugün",
+        .todo_group_tomorrow: "Yarın",
+        .todo_group_thisWeek: "Bu hafta",
+        .todo_group_later: "Sonra",
+        .todo_group_noDate: "Bir gün",
+        .todo_group_completed: "Tamamlanan",
 
         .focus_start: "Başla", .focus_resume: "Devam",
         .focus_pause: "Duraklat", .focus_reset: "Sıfırla",
@@ -420,6 +497,9 @@ private enum Dict {
         .shortcut_pick: "Seç…",
         .shortcut_remove: "Kaldır",
         .shortcut_empty: "Hiç kısayol yok",
+        .shortcut_pin: "Üste sabitle",
+        .shortcut_unpin: "Sabitlemeyi kaldır",
+        .shortcut_launches: "Açılış sayısı",
 
         .clip_empty: "Pano geçmişi boş\n(kopyala → görünsün)",
         .clip_searchPlaceholder: "Ara…",
@@ -429,6 +509,26 @@ private enum Dict {
         .notes_untitled: "(isimsiz)",
         .notes_new: "Yeni not",
         .notes_empty: "Hiç not yok",
+        .notes_welcomeTitle: "Hoşgeldin",
+        .notes_welcomeBody: "Serbestçe yaz. Markdown çalışır — **kalın**, _italik_, `kod` veya #etiket deneyebilirsin.\n\n⌘⇧N yeni · ⌘D çoğalt · ⌘/ önizleme · ⌘; zaman damgası",
+        .notes_pin: "Sabitle",
+        .notes_unpin: "Sabitlemeyi kaldır",
+        .notes_duplicate: "Çoğalt",
+        .notes_copyBody: "İçeriği kopyala",
+        .notes_color: "Renk",
+        .notes_preview: "Önizle",
+        .notes_edit: "Düzenle",
+        .notes_words: "kelime",
+        .notes_chars: "karakter",
+        .notes_minRead: "dk okuma",
+        .notes_saved: "Kaydedildi",
+        .notes_noMatch: "Eşleşme yok",
+        .notes_newFromClipboard: "Panodan yeni not",
+        .notes_group_pinned: "Sabitli",
+        .notes_group_today: "Bugün",
+        .notes_group_yesterday: "Dün",
+        .notes_group_thisWeek: "Bu hafta",
+        .notes_group_older: "Daha eski",
 
         .sys_cpu: "CPU", .sys_memory: "Bellek", .sys_disk: "Disk",
         .sys_battery: "Pil", .sys_charging: "şarj", .sys_free: "boş", .sys_used: "kullanılan",

@@ -82,7 +82,14 @@ final class LocalizationTests: XCTestCase {
             .ai_providers_emptyTitle, .set_title, .set_ai, .set_general, .set_about,
             .about_version, .about_description, .about_copyright,
             .record_audioStart, .record_screenStart, .record_stop,
-            .record_clickToStart, .record_empty, .set_sc_global
+            .record_clickToStart, .record_empty, .set_sc_global,
+            .todo_allDone, .todo_doneCountSuffix, .todo_tip,
+            .todo_priority, .todo_priority_low, .todo_priority_normal, .todo_priority_high,
+            .todo_dueToday, .todo_dueTomorrow, .todo_dueNextWeek, .todo_dueClear,
+            .todo_markDone, .todo_markActive, .todo_noMatch,
+            .todo_group_overdue, .todo_group_today, .todo_group_tomorrow,
+            .todo_group_thisWeek, .todo_group_later, .todo_group_noDate, .todo_group_completed,
+            .shortcut_pin, .shortcut_unpin, .shortcut_launches
         ]
         for key in allCases {
             let value = l.t(key)
