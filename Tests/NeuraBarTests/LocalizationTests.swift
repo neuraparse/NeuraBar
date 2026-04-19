@@ -100,7 +100,13 @@ final class LocalizationTests: XCTestCase {
             .focus_custom_title, .focus_custom_focus,
             .focus_custom_shortBreak, .focus_custom_longBreak,
             .ai_conversations, .ai_newConversation, .ai_noConversations,
-            .ai_untitled, .ai_pin, .ai_unpin, .ai_rename, .ai_duplicate
+            .ai_untitled, .ai_pin, .ai_unpin, .ai_rename, .ai_duplicate,
+            .sys_status_ok, .sys_status_warning, .sys_status_critical,
+            .sys_configure, .sys_thresholds, .sys_notify, .sys_alert_title,
+            .record_opt_mic, .record_opt_cursor, .record_opt_notify,
+            .record_input, .record_savedToast,
+            .record_notif_audioSaved, .record_notif_screenSaved,
+            .clip_captured
         ]
         for key in allCases {
             let value = l.t(key)

@@ -11,9 +11,11 @@ struct NeuraBarApp: App {
                 .environmentObject(store)
                 .environmentObject(l10n)
                 .environmentObject(store.conversations)
+                .environmentObject(store.system)
                 .frame(width: NB.panelWidth, height: NB.panelHeight)
         } label: {
             MenuBarIconView()
+                .environmentObject(store.system)
         }
         .menuBarExtraStyle(.window)
     }

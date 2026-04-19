@@ -47,12 +47,32 @@ struct Recording: Identifiable, Codable, Equatable {
 
 // MARK: - Store
 
+struct RecordingOptions: Codable, Equatable {
+    var includeMicrophone: Bool = true
+    var captureCursor: Bool = true
+    var postNotification: Bool = true
+
+    static let `default` = RecordingOptions()
+
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        includeMicrophone = (try? c.decode(Bool.self, forKey: .includeMicrophone)) ?? true
+        captureCursor = (try? c.decode(Bool.self, forKey: .captureCursor)) ?? true
+        postNotification = (try? c.decode(Bool.self, forKey: .postNotification)) ?? true
+    }
+}
+
 final class RecordingStore: NSObject, ObservableObject {
     @Published var recordings: [Recording] = []
     @Published var isRecordingAudio: Bool = false
     @Published var isRecordingScreen: Bool = false
-    @Published var currentDuration: Double = 0   // live timer, seconds
+    @Published var currentDuration: Double = 0
+    @Published var audioLevel: Float = 0          // 0…1 for the live meter
     @Published var lastError: String?
+    @Published var options: RecordingOptions {
+        didSet { Persistence.save(options, to: "recording_options.json") }
+    }
 
     private var audioRecorder: AVAudioRecorder?
     private var currentAudioURL: URL?
@@ -66,11 +86,31 @@ final class RecordingStore: NSObject, ObservableObject {
     private let file = "recordings.json"
 
     override init() {
+        self.options = Persistence.load(RecordingOptions.self, from: "recording_options.json")
+            ?? RecordingOptions()
         super.init()
         if let saved = Persistence.load([Recording].self, from: file) {
-            // Drop any recordings whose file has been deleted on disk.
             self.recordings = saved.filter { FileManager.default.fileExists(atPath: $0.filePath) }
         }
+    }
+
+    // MARK: - Input device enumeration (read-only)
+
+    /// Available audio input devices — shown for transparency so the user
+    /// knows which mic the system default is using. AVAudioRecorder uses the
+    /// system default input; to record from a specific device the user must
+    /// change it in System Settings → Sound.
+    static var availableMicrophones: [(id: String, name: String)] {
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone],
+            mediaType: .audio,
+            position: .unspecified
+        )
+        return session.devices.map { ($0.uniqueID, $0.localizedName) }
+    }
+
+    static var currentMicrophoneName: String? {
+        AVCaptureDevice.default(for: .audio)?.localizedName
     }
 
     // MARK: Audio
@@ -87,6 +127,7 @@ final class RecordingStore: NSObject, ObservableObject {
         do {
             audioRecorder = try AVAudioRecorder(url: url, settings: settings)
             audioRecorder?.delegate = self
+            audioRecorder?.isMeteringEnabled = true
             audioRecorder?.record()
             currentAudioURL = url
             currentAudioStart = Date()
@@ -107,6 +148,7 @@ final class RecordingStore: NSObject, ObservableObject {
         currentAudioURL = nil
         currentAudioStart = nil
         isRecordingAudio = false
+        audioLevel = 0
         stopTickIfIdle()
 
         if let url = url {
@@ -121,21 +163,31 @@ final class RecordingStore: NSObject, ObservableObject {
             )
             recordings.insert(rec, at: 0)
             persist()
+            notifyRecordingSaved(rec)
         }
     }
 
     // MARK: Screen
 
-    /// Start a screen recording using the system `screencapture -v` tool —
-    /// avoids ScreenCaptureKit's async ceremony for a simple non-interactive
-    /// flow, and the first run automatically prompts for permission.
+    /// Start a screen recording using the system `screencapture -v` tool.
+    /// Flags are driven by `options`:
+    ///   -v    video mode
+    ///   -x    silent (no shutter beep)
+    ///   -C    capture cursor         (options.captureCursor)
+    ///   -g    capture system + mic audio into the video track
+    ///         (options.includeMicrophone)
     func startScreen() {
         guard !isRecordingScreen else { return }
         let url = Recording.newFilePath(kind: .screen)
         let task = Process()
         task.launchPath = "/usr/sbin/screencapture"
-        // -v = video, -x = silent, -C = capture cursor
-        task.arguments = ["-v", "-x", "-C", url.path]
+
+        var args = ["-v", "-x"]
+        if options.captureCursor { args.append("-C") }
+        if options.includeMicrophone { args.append("-g") }
+        args.append(url.path)
+        task.arguments = args
+
         task.standardOutput = Pipe()
         task.standardError = Pipe()
         do {
@@ -182,6 +234,7 @@ final class RecordingStore: NSObject, ObservableObject {
             )
             recordings.insert(rec, at: 0)
             persist()
+            notifyRecordingSaved(rec)
         } else {
             lastError = "Screen recording file not found — permission needed?"
         }
@@ -212,14 +265,34 @@ final class RecordingStore: NSObject, ObservableObject {
     private func startTick() {
         currentDuration = 0
         tickTimer?.invalidate()
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // 10 Hz while audio is recording so the level meter feels responsive;
+        // 2 Hz otherwise is plenty for the duration counter.
+        let interval = isRecordingAudio ? 0.1 : 0.5
+        tickTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.isRecordingAudio, let s = self.currentAudioStart {
                 self.currentDuration = Date().timeIntervalSince(s)
+                self.audioRecorder?.updateMeters()
+                // avgPower is in dB, typical range -60…0. Map to 0…1.
+                let db = self.audioRecorder?.averagePower(forChannel: 0) ?? -60
+                let normalized = max(0, min(1, (db + 60) / 60))
+                self.audioLevel = Float(normalized)
             } else if self.isRecordingScreen, let s = self.currentScreenStart {
                 self.currentDuration = Date().timeIntervalSince(s)
             }
         }
+    }
+
+    private func notifyRecordingSaved(_ rec: Recording) {
+        Task { @MainActor in
+            MenuBarStatusCoordinator.shared.flash(.recordingSaved)
+        }
+        guard options.postNotification else { return }
+        let body = "\(rec.displayName) · \(Self.formatDuration(rec.durationSeconds))"
+        NotificationService.post(
+            title: rec.kind == .audio ? L.t(.record_notif_audioSaved) : L.t(.record_notif_screenSaved),
+            body: body
+        )
     }
 
     private func stopTickIfIdle() {

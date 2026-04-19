@@ -37,6 +37,9 @@ enum Loc: String {
     // Record tab
     case record_audioStart, record_screenStart, record_stop
     case record_clickToStart, record_empty
+    case record_opt_mic, record_opt_cursor, record_opt_notify
+    case record_input, record_savedToast
+    case record_notif_audioSaved, record_notif_screenSaved
 
     // Common
     case save, cancel, close, add, remove, delete, edit, done
@@ -88,7 +91,7 @@ enum Loc: String {
     case shortcut_dropHere, shortcut_dropHint
 
     // Clipboard
-    case clip_empty, clip_searchPlaceholder
+    case clip_empty, clip_searchPlaceholder, clip_captured
 
     // Notes
     case notes_title, notes_titlePlaceholder, notes_untitled, notes_new, notes_empty
@@ -101,6 +104,8 @@ enum Loc: String {
 
     // System
     case sys_cpu, sys_memory, sys_disk, sys_battery, sys_charging, sys_free, sys_used
+    case sys_status_ok, sys_status_warning, sys_status_critical
+    case sys_configure, sys_thresholds, sys_notify, sys_alert_title
 
     // Automation
     case auto_category_files, auto_category_cleanup, auto_category_system
@@ -178,6 +183,13 @@ private enum Dict {
         .record_stop: "Stop",
         .record_clickToStart: "Click to start",
         .record_empty: "No recordings yet",
+        .record_opt_mic: "Include microphone",
+        .record_opt_cursor: "Capture cursor",
+        .record_opt_notify: "Notify when saved",
+        .record_input: "Input",
+        .record_savedToast: "Recording saved",
+        .record_notif_audioSaved: "Audio recording saved",
+        .record_notif_screenSaved: "Screen recording saved",
 
         .save: "Save", .cancel: "Cancel", .close: "Close", .add: "Add",
         .remove: "Remove", .delete: "Delete", .edit: "Edit", .done: "Done",
@@ -291,6 +303,7 @@ private enum Dict {
 
         .clip_empty: "Clipboard history is empty\n(copy something → it appears)",
         .clip_searchPlaceholder: "Search…",
+        .clip_captured: "Saved to history",
 
         .notes_title: "Notes",
         .notes_titlePlaceholder: "Title",
@@ -320,6 +333,13 @@ private enum Dict {
 
         .sys_cpu: "CPU", .sys_memory: "Memory", .sys_disk: "Disk",
         .sys_battery: "Battery", .sys_charging: "charging", .sys_free: "free", .sys_used: "used",
+        .sys_status_ok: "All systems nominal",
+        .sys_status_warning: "Needs attention",
+        .sys_status_critical: "Critical",
+        .sys_configure: "Configure thresholds",
+        .sys_thresholds: "Alert thresholds",
+        .sys_notify: "Send notification on critical",
+        .sys_alert_title: "System under pressure",
 
         .auto_category_files: "Files",
         .auto_category_cleanup: "Cleanup",
@@ -454,6 +474,13 @@ private enum Dict {
         .record_stop: "Durdur",
         .record_clickToStart: "Başlatmak için tıkla",
         .record_empty: "Henüz kayıt yok",
+        .record_opt_mic: "Mikrofonu dahil et",
+        .record_opt_cursor: "İmleci yakala",
+        .record_opt_notify: "Kaydedilince bildirim",
+        .record_input: "Giriş",
+        .record_savedToast: "Kayıt kaydedildi",
+        .record_notif_audioSaved: "Ses kaydı kaydedildi",
+        .record_notif_screenSaved: "Ekran kaydı kaydedildi",
 
         .save: "Kaydet", .cancel: "İptal", .close: "Kapat", .add: "Ekle",
         .remove: "Kaldır", .delete: "Sil", .edit: "Düzenle", .done: "Tamam",
@@ -567,6 +594,7 @@ private enum Dict {
 
         .clip_empty: "Pano geçmişi boş\n(kopyala → görünsün)",
         .clip_searchPlaceholder: "Ara…",
+        .clip_captured: "Geçmişe kaydedildi",
 
         .notes_title: "Notlar",
         .notes_titlePlaceholder: "Başlık",
@@ -596,6 +624,13 @@ private enum Dict {
 
         .sys_cpu: "CPU", .sys_memory: "Bellek", .sys_disk: "Disk",
         .sys_battery: "Pil", .sys_charging: "şarj", .sys_free: "boş", .sys_used: "kullanılan",
+        .sys_status_ok: "Her şey yolunda",
+        .sys_status_warning: "Dikkat",
+        .sys_status_critical: "Kritik",
+        .sys_configure: "Eşikleri yapılandır",
+        .sys_thresholds: "Uyarı eşikleri",
+        .sys_notify: "Kritik olunca bildirim gönder",
+        .sys_alert_title: "Sistem baskı altında",
 
         .auto_category_files: "Dosyalar",
         .auto_category_cleanup: "Temizlik",

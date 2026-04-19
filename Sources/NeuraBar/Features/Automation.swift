@@ -76,6 +76,12 @@ final class AutomationStore: ObservableObject {
         history.insert(run, at: 0)
         if history.count > 50 { history = Array(history.prefix(50)) }
         runningTaskID = nil
+
+        // Feedback lands on the menu bar icon — brief event flash — instead
+        // of an in-app toast.
+        MenuBarStatusCoordinator.shared.flash(
+            run.status == .succeeded ? .automationDone : .automationFailed
+        )
     }
 }
 

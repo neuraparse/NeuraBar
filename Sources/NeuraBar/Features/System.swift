@@ -2,6 +2,48 @@ import SwiftUI
 import Darwin
 import IOKit.ps
 
+// MARK: - Alert config
+
+enum AlertLevel: String, Codable { case ok, warning, critical }
+
+struct SystemAlertConfig: Codable, Equatable {
+    var cpuWarn: Double = 75
+    var cpuCrit: Double = 90
+    var memWarn: Double = 80   // percent
+    var memCrit: Double = 92
+    var diskFreeWarn: Double = 15   // percent free
+    var diskFreeCrit: Double = 5
+    var batteryWarn: Int = 25
+    var batteryCrit: Int = 10
+
+    var enableCPU: Bool = true
+    var enableMemory: Bool = true
+    var enableDisk: Bool = true
+    var enableBattery: Bool = true
+    var postNotifications: Bool = true
+
+    static let `default` = SystemAlertConfig()
+
+    // Tolerant decode so older configs load cleanly.
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cpuWarn = (try? c.decode(Double.self, forKey: .cpuWarn)) ?? 75
+        cpuCrit = (try? c.decode(Double.self, forKey: .cpuCrit)) ?? 90
+        memWarn = (try? c.decode(Double.self, forKey: .memWarn)) ?? 80
+        memCrit = (try? c.decode(Double.self, forKey: .memCrit)) ?? 92
+        diskFreeWarn = (try? c.decode(Double.self, forKey: .diskFreeWarn)) ?? 15
+        diskFreeCrit = (try? c.decode(Double.self, forKey: .diskFreeCrit)) ?? 5
+        batteryWarn = (try? c.decode(Int.self, forKey: .batteryWarn)) ?? 25
+        batteryCrit = (try? c.decode(Int.self, forKey: .batteryCrit)) ?? 10
+        enableCPU = (try? c.decode(Bool.self, forKey: .enableCPU)) ?? true
+        enableMemory = (try? c.decode(Bool.self, forKey: .enableMemory)) ?? true
+        enableDisk = (try? c.decode(Bool.self, forKey: .enableDisk)) ?? true
+        enableBattery = (try? c.decode(Bool.self, forKey: .enableBattery)) ?? true
+        postNotifications = (try? c.decode(Bool.self, forKey: .postNotifications)) ?? true
+    }
+}
+
 final class SystemMonitor: ObservableObject {
     @Published var cpu: Double = 0
     @Published var memoryUsedGB: Double = 0
@@ -11,8 +53,20 @@ final class SystemMonitor: ObservableObject {
     @Published var batteryLevel: Int = -1
     @Published var batteryCharging: Bool = false
 
+    @Published var config: SystemAlertConfig {
+        didSet { Persistence.save(config, to: "system_alert_config.json") }
+    }
+    @Published private(set) var alertLevel: AlertLevel = .ok
+    @Published private(set) var alertReasons: [String] = []
+
     private var timer: Timer?
     private var prevCPU: host_cpu_load_info = host_cpu_load_info()
+    private var lastAlertLevel: AlertLevel = .ok
+
+    init() {
+        self.config = Persistence.load(SystemAlertConfig.self, from: "system_alert_config.json")
+            ?? SystemAlertConfig()
+    }
 
     func start() {
         timer?.invalidate()
@@ -34,6 +88,100 @@ final class SystemMonitor: ObservableObject {
         let bat = readBattery()
         batteryLevel = bat.level
         batteryCharging = bat.charging
+
+        evaluateAlert()
+    }
+
+    // MARK: - Alert evaluation (pure, testable)
+
+    /// Compute the alert level + reasons for a given metric snapshot + config.
+    /// Exposed static so tests can pin deterministic inputs.
+    static func evaluate(
+        cpu: Double,
+        memoryUsedGB: Double,
+        memoryTotalGB: Double,
+        diskFreeGB: Double,
+        diskTotalGB: Double,
+        batteryLevel: Int,
+        batteryCharging: Bool,
+        config: SystemAlertConfig
+    ) -> (level: AlertLevel, reasons: [String]) {
+        var level: AlertLevel = .ok
+        var reasons: [String] = []
+
+        func escalate(_ l: AlertLevel) {
+            if l == .critical { level = .critical }
+            else if l == .warning && level == .ok { level = .warning }
+        }
+
+        if config.enableCPU {
+            if cpu >= config.cpuCrit {
+                escalate(.critical)
+                reasons.append("CPU \(Int(cpu))% ≥ \(Int(config.cpuCrit))%")
+            } else if cpu >= config.cpuWarn {
+                escalate(.warning)
+                reasons.append("CPU \(Int(cpu))%")
+            }
+        }
+
+        if config.enableMemory, memoryTotalGB > 0 {
+            let pct = memoryUsedGB / memoryTotalGB * 100
+            if pct >= config.memCrit {
+                escalate(.critical)
+                reasons.append("RAM \(Int(pct))% ≥ \(Int(config.memCrit))%")
+            } else if pct >= config.memWarn {
+                escalate(.warning)
+                reasons.append("RAM \(Int(pct))%")
+            }
+        }
+
+        if config.enableDisk, diskTotalGB > 0 {
+            let freePct = diskFreeGB / diskTotalGB * 100
+            if freePct <= config.diskFreeCrit {
+                escalate(.critical)
+                reasons.append("Disk free \(Int(freePct))% ≤ \(Int(config.diskFreeCrit))%")
+            } else if freePct <= config.diskFreeWarn {
+                escalate(.warning)
+                reasons.append("Disk free \(Int(freePct))%")
+            }
+        }
+
+        if config.enableBattery, batteryLevel >= 0, !batteryCharging {
+            if batteryLevel <= config.batteryCrit {
+                escalate(.critical)
+                reasons.append("Battery \(batteryLevel)% ≤ \(config.batteryCrit)%")
+            } else if batteryLevel <= config.batteryWarn {
+                escalate(.warning)
+                reasons.append("Battery \(batteryLevel)%")
+            }
+        }
+
+        return (level, reasons)
+    }
+
+    private func evaluateAlert() {
+        let (level, reasons) = Self.evaluate(
+            cpu: cpu,
+            memoryUsedGB: memoryUsedGB,
+            memoryTotalGB: memoryTotalGB,
+            diskFreeGB: diskFreeGB,
+            diskTotalGB: diskTotalGB,
+            batteryLevel: batteryLevel,
+            batteryCharging: batteryCharging,
+            config: config
+        )
+        alertLevel = level
+        alertReasons = reasons
+
+        // Fire a notification only when we first cross into critical — avoid
+        // spamming the user every tick.
+        if level == .critical, lastAlertLevel != .critical, config.postNotifications {
+            NotificationService.post(
+                title: L.t(.sys_alert_title),
+                body: reasons.joined(separator: " · ")
+            )
+        }
+        lastAlertLevel = level
     }
 
     private func readCPU() -> Double {
@@ -103,9 +251,11 @@ final class SystemMonitor: ObservableObject {
 struct SystemView: View {
     @EnvironmentObject var mon: SystemMonitor
     @EnvironmentObject var l10n: Localization
+    @State private var showThresholds = false
 
     var body: some View {
         VStack(spacing: 10) {
+            alertHeader
             StatCard(
                 icon: "cpu",
                 title: l10n.t(.sys_cpu),
@@ -127,6 +277,10 @@ struct SystemView: View {
                 progress: mon.diskTotalGB > 0 ? 1 - (mon.diskFreeGB / mon.diskTotalGB) : 0,
                 gradient: [.cyan, .teal]
             )
+            if showThresholds {
+                thresholdsPanel
+                    .transition(.opacity.combined(with: .offset(y: -4)))
+            }
             if mon.batteryLevel >= 0 {
                 StatCard(
                     icon: mon.batteryCharging ? "battery.100.bolt" : "battery.75",
@@ -137,6 +291,179 @@ struct SystemView: View {
                 )
             }
             Spacer()
+        }
+        .animation(.spring(duration: 0.22, bounce: 0.15), value: showThresholds)
+    }
+
+    // MARK: - Status header
+
+    private var alertHeader: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(alertColor)
+                .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .stroke(alertColor.opacity(0.4), lineWidth: 5)
+                        .scaleEffect(mon.alertLevel == .ok ? 1 : 1.8)
+                        .opacity(mon.alertLevel == .ok ? 0 : 0.5)
+                        .animation(
+                            mon.alertLevel == .ok
+                                ? .default
+                                : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                            value: mon.alertLevel
+                        )
+                )
+            VStack(alignment: .leading, spacing: 0) {
+                Text(alertTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(alertColor)
+                if !mon.alertReasons.isEmpty {
+                    Text(mon.alertReasons.joined(separator: " · "))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Button {
+                withAnimation { showThresholds.toggle() }
+            } label: {
+                Image(systemName: showThresholds ? "chevron.up" : "slider.horizontal.3")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(PressableStyle())
+            .help(l10n.t(.sys_configure))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(alertColor.opacity(mon.alertLevel == .ok ? 0.04 : 0.1))
+        )
+    }
+
+    private var alertColor: Color {
+        switch mon.alertLevel {
+        case .ok: return .green
+        case .warning: return .orange
+        case .critical: return .red
+        }
+    }
+
+    private var alertTitle: String {
+        switch mon.alertLevel {
+        case .ok: return l10n.t(.sys_status_ok)
+        case .warning: return l10n.t(.sys_status_warning)
+        case .critical: return l10n.t(.sys_status_critical)
+        }
+    }
+
+    // MARK: - Thresholds panel
+
+    private var thresholdsPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(l10n.t(.sys_thresholds))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            thresholdRow(
+                enabled: $mon.config.enableCPU,
+                label: l10n.t(.sys_cpu),
+                warn: $mon.config.cpuWarn,
+                crit: $mon.config.cpuCrit,
+                range: 30...99,
+                suffix: "%"
+            )
+            thresholdRow(
+                enabled: $mon.config.enableMemory,
+                label: l10n.t(.sys_memory),
+                warn: $mon.config.memWarn,
+                crit: $mon.config.memCrit,
+                range: 30...99,
+                suffix: "%"
+            )
+            thresholdRow(
+                enabled: $mon.config.enableDisk,
+                label: l10n.t(.sys_disk),
+                warn: Binding(
+                    get: { 100 - mon.config.diskFreeWarn },
+                    set: { mon.config.diskFreeWarn = 100 - $0 }
+                ),
+                crit: Binding(
+                    get: { 100 - mon.config.diskFreeCrit },
+                    set: { mon.config.diskFreeCrit = 100 - $0 }
+                ),
+                range: 50...99,
+                suffix: "%"
+            )
+            if mon.batteryLevel >= 0 {
+                thresholdRow(
+                    enabled: $mon.config.enableBattery,
+                    label: l10n.t(.sys_battery),
+                    warn: Binding(
+                        get: { Double(mon.config.batteryWarn) },
+                        set: { mon.config.batteryWarn = Int($0) }
+                    ),
+                    crit: Binding(
+                        get: { Double(mon.config.batteryCrit) },
+                        set: { mon.config.batteryCrit = Int($0) }
+                    ),
+                    range: 5...50,
+                    suffix: "%",
+                    reversed: true
+                )
+            }
+
+            Toggle(isOn: $mon.config.postNotifications) {
+                Text(l10n.t(.sys_notify))
+                    .font(.system(size: 11))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .padding(.top, 2)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.05))
+        )
+    }
+
+    /// reversed = true when the metric fires when it falls BELOW the threshold
+    /// (battery), so the slider semantics match the alert.
+    private func thresholdRow(
+        enabled: Binding<Bool>,
+        label: String,
+        warn: Binding<Double>,
+        crit: Binding<Double>,
+        range: ClosedRange<Double>,
+        suffix: String,
+        reversed: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Toggle("", isOn: enabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                Text(label).font(.system(size: 11, weight: .medium))
+                Spacer()
+                Text("\(Int(warn.wrappedValue))\(suffix) · \(Int(crit.wrappedValue))\(suffix)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            if enabled.wrappedValue {
+                HStack(spacing: 4) {
+                    Slider(value: warn, in: range)
+                        .tint(.orange)
+                    Slider(value: crit, in: range)
+                        .tint(.red)
+                }
+                .controlSize(.mini)
+            }
         }
     }
 }

@@ -6,8 +6,12 @@ struct RecordView: View {
     @EnvironmentObject var l10n: Localization
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             recorderButtons
+            if store.isRecordingAudio {
+                audioLevelMeter
+            }
+            optionsPanel
             if let err = store.lastError {
                 Text(err)
                     .font(.caption)
@@ -29,6 +33,76 @@ struct RecordView: View {
                 }
             }
         }
+        .animation(.spring(duration: 0.22, bounce: 0.15), value: store.isRecordingAudio)
+        .animation(.spring(duration: 0.22, bounce: 0.15), value: store.isRecordingScreen)
+    }
+
+    // MARK: - Options panel
+
+    private var optionsPanel: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Toggle(isOn: $store.options.includeMicrophone) {
+                HStack(spacing: 4) {
+                    Image(systemName: "mic.fill").font(.system(size: 9))
+                    Text(l10n.t(.record_opt_mic)).font(.system(size: 11))
+                }
+            }
+            .toggleStyle(.switch).controlSize(.mini)
+
+            Toggle(isOn: $store.options.captureCursor) {
+                HStack(spacing: 4) {
+                    Image(systemName: "cursorarrow").font(.system(size: 9))
+                    Text(l10n.t(.record_opt_cursor)).font(.system(size: 11))
+                }
+            }
+            .toggleStyle(.switch).controlSize(.mini)
+
+            Toggle(isOn: $store.options.postNotification) {
+                HStack(spacing: 4) {
+                    Image(systemName: "bell.fill").font(.system(size: 9))
+                    Text(l10n.t(.record_opt_notify)).font(.system(size: 11))
+                }
+            }
+            .toggleStyle(.switch).controlSize(.mini)
+
+            if let mic = RecordingStore.currentMicrophoneName {
+                HStack(spacing: 4) {
+                    Image(systemName: "waveform.circle")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    Text("\(l10n.t(.record_input)): \(mic)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04))
+        )
+    }
+
+    // MARK: - Live level meter
+
+    private var audioLevelMeter: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.secondary.opacity(0.18))
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(
+                        LinearGradient(
+                            colors: [.green, .yellow, .red],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(2, geo.size.width * CGFloat(store.audioLevel)))
+                    .animation(.linear(duration: 0.1), value: store.audioLevel)
+            }
+        }
+        .frame(height: 5)
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 
     // MARK: - Recorder buttons

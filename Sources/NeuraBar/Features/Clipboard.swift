@@ -47,6 +47,11 @@ final class ClipboardManager: ObservableObject {
         }
         items.insert(ClipItem(text: trimmed, date: Date()), at: 0)
         trim()
+        // Status feedback is delivered via the menu bar icon (brief animation)
+        // instead of an in-app toast. See MenuBarStatusCoordinator.
+        Task { @MainActor in
+            MenuBarStatusCoordinator.shared.flash(.clipboardCopied)
+        }
     }
 
     private func trim() {
@@ -65,10 +70,12 @@ final class ClipboardManager: ObservableObject {
         pb.clearContents()
         pb.setString(item.text, forType: .string)
         lastChange = pb.changeCount
-        // Move to top on re-copy
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
             let c = items.remove(at: idx)
             items.insert(c, at: 0)
+        }
+        Task { @MainActor in
+            MenuBarStatusCoordinator.shared.flash(.clipboardCopied)
         }
     }
 

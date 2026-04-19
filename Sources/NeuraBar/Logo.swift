@@ -110,11 +110,53 @@ struct LogoView: View {
 // MARK: - Menu bar icon (template, monochrome)
 
 struct MenuBarIconView: View {
+    /// Live system alert level drives the "critical" (red glyph) and "warning"
+    /// (orange dot) persistent states.
+    @EnvironmentObject var system: SystemMonitor
+    /// Short-lived events (copy / recording saved / automation done) flash
+    /// a colored glyph over the icon for ~1.4 s before reverting.
+    @ObservedObject var events = MenuBarStatusCoordinator.shared
+
     var body: some View {
-        // macOS renders template images monochrome in the menu bar,
-        // so we pre-render a minimal glyph to NSImage and mark it as template.
-        if let nsImage = Self.templateImage() {
+        ZStack(alignment: .topTrailing) {
+            primaryGlyph
+            // Warning-level badge: a small orange dot sits on top of the base
+            // glyph. Critical state replaces the glyph entirely (see above),
+            // so this only fires for warnings.
+            if system.alertLevel == .warning && events.currentEvent == nil {
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 6, height: 6)
+                    .offset(x: 3, y: -2)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .frame(width: 22, height: 22)
+        .animation(.spring(duration: 0.28, bounce: 0.35), value: events.currentEvent)
+        .animation(.easeInOut(duration: 0.2), value: system.alertLevel)
+    }
+
+    /// What the main icon looks like at a given moment. Precedence:
+    ///   1. A flashing event (copy, recording saved, automation done/failed)
+    ///   2. The system is critical (pulsing red warning triangle)
+    ///   3. The baseline template NeuraMark
+    @ViewBuilder
+    private var primaryGlyph: some View {
+        if let event = events.currentEvent {
+            Image(systemName: event.icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(event.tint)
+                .symbolEffect(.bounce, value: event)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
+        } else if system.alertLevel == .critical {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.red)
+                .symbolEffect(.pulse, options: .repeating)
+                .transition(.scale.combined(with: .opacity))
+        } else if let nsImage = Self.templateImage() {
             Image(nsImage: nsImage)
+                .transition(.opacity)
         } else {
             Image(systemName: "sparkles")
         }
