@@ -88,6 +88,156 @@ final class PomodoroTests: NBTestCase {
         XCTAssertEqual(p.progress, 0, accuracy: 0.01)
         p.pause()
     }
+
+    // MARK: - Modes
+
+    func testDefaultModeIsClassic() {
+        let p = PomodoroTimer()
+        XCTAssertEqual(p.mode, .classic)
+        XCTAssertEqual(p.focusMinutes, 25)
+        XCTAssertEqual(p.shortBreakMinutes, 5)
+        XCTAssertEqual(p.longBreakMinutes, 15)
+    }
+
+    func testSwitchingToDeepModeUpdatesDurations() {
+        let p = PomodoroTimer()
+        p.mode = .deep
+        XCTAssertEqual(p.focusMinutes, 90)
+        XCTAssertEqual(p.shortBreakMinutes, 20)
+        XCTAssertEqual(p.longBreakMinutes, 45)
+    }
+
+    func testCustomModeUsesCustomValues() {
+        let p = PomodoroTimer()
+        p.customFocusMinutes = 45
+        p.customShortBreakMinutes = 7
+        p.customLongBreakMinutes = 25
+        p.mode = .custom
+        XCTAssertEqual(p.focusMinutes, 45)
+        XCTAssertEqual(p.shortBreakMinutes, 7)
+        XCTAssertEqual(p.longBreakMinutes, 25)
+    }
+
+    func testModeChangeUpdatesIdleRemaining() {
+        let p = PomodoroTimer()
+        XCTAssertEqual(p.remaining, 25 * 60)
+        p.mode = .deep
+        XCTAssertEqual(p.remaining, 90 * 60,
+                       "Idle remaining should reflect new mode duration")
+    }
+
+    // MARK: - Skip / extend
+
+    func testExtendAddsMinutesClampedAt60() {
+        let p = PomodoroTimer()
+        p.startFocus()
+        let before = p.remaining
+        p.extend(minutes: 5)
+        XCTAssertEqual(p.remaining, before + 300)
+        p.extend(minutes: 120) // should clamp to 60
+        XCTAssertEqual(p.remaining, before + 300 + 3600)
+        p.pause()
+    }
+
+    func testSkipWhileIdleDoesNothing() {
+        let p = PomodoroTimer()
+        p.skip()
+        XCTAssertEqual(p.phase, .idle)
+        XCTAssertTrue(p.sessions.isEmpty)
+    }
+
+    // MARK: - Stats
+
+    func testSessionsTodayCountsFocusOnly() {
+        let p = PomodoroTimer()
+        let now = Date()
+        p.sessions = [
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: now, endedAt: now.addingTimeInterval(1500)),
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: now, endedAt: now.addingTimeInterval(1500)),
+            PomodoroSession(phase: PomodoroTimer.Phase.shortBreak.rawValue,
+                            startedAt: now, endedAt: now.addingTimeInterval(300))
+        ]
+        XCTAssertEqual(p.sessionsToday(now: now), 2,
+                       "Breaks should not count towards sessionsToday")
+    }
+
+    func testFocusMinutesTodayAggregates() {
+        let p = PomodoroTimer()
+        let now = Date()
+        p.sessions = [
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: now, endedAt: now.addingTimeInterval(1500)), // 25
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: now, endedAt: now.addingTimeInterval(900))   // 15
+        ]
+        XCTAssertEqual(p.focusMinutesToday(now: now), 40)
+    }
+
+    func testStreakCountsConsecutiveDays() {
+        let p = PomodoroTimer()
+        let cal = Calendar.current
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+        let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
+        let twoDaysAgo = cal.date(byAdding: .day, value: -2, to: today)!
+        let fiveDaysAgo = cal.date(byAdding: .day, value: -5, to: today)!
+
+        p.sessions = [
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: today, endedAt: today.addingTimeInterval(1500)),
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: yesterday, endedAt: yesterday.addingTimeInterval(1500)),
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: twoDaysAgo, endedAt: twoDaysAgo.addingTimeInterval(1500)),
+            // Gap — old session shouldn't extend the streak
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: fiveDaysAgo, endedAt: fiveDaysAgo.addingTimeInterval(1500))
+        ]
+        XCTAssertEqual(p.streakDays(now: now), 3)
+    }
+
+    func testStreakZeroWhenNoSessionToday() {
+        let p = PomodoroTimer()
+        let cal = Calendar.current
+        let now = Date()
+        let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!
+        p.sessions = [
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: yesterday, endedAt: yesterday.addingTimeInterval(1500))
+        ]
+        XCTAssertEqual(p.streakDays(now: now), 0,
+                       "Streak requires a session for today")
+    }
+
+    // MARK: - Session persistence
+
+    func testSessionsPersistAcrossInstances() {
+        let p1 = PomodoroTimer()
+        p1.sessions = [
+            PomodoroSession(phase: PomodoroTimer.Phase.focus.rawValue,
+                            startedAt: Date(), endedAt: Date().addingTimeInterval(1500))
+        ]
+        let p2 = PomodoroTimer()
+        XCTAssertEqual(p2.sessions.count, 1)
+    }
+
+    // MARK: - Config persistence
+
+    func testConfigPersistsAcrossInstances() {
+        let p1 = PomodoroTimer()
+        p1.mode = .deep
+        p1.dailyGoal = 7
+        p1.autoStartBreak = false
+        p1.autoStartNextFocus = true
+
+        let p2 = PomodoroTimer()
+        XCTAssertEqual(p2.mode, .deep)
+        XCTAssertEqual(p2.dailyGoal, 7)
+        XCTAssertFalse(p2.autoStartBreak)
+        XCTAssertTrue(p2.autoStartNextFocus)
+    }
 }
 
 final class PersistenceTests: NBTestCase {

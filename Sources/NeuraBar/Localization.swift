@@ -72,12 +72,20 @@ enum Loc: String {
     case focus_notif_focusDoneTitle, focus_notif_focusDoneBody
     case focus_notif_breakDoneTitle, focus_notif_breakDoneBody
     case focus_sessionsSuffix
+    case focus_mode_classic, focus_mode_extended, focus_mode_short, focus_mode_deep, focus_mode_custom
+    case focus_skip, focus_extend5, focus_endsAt
+    case focus_stat_streak, focus_stat_sessionsToday, focus_stat_focusTime
+    case focus_autoBreak, focus_autoFocus
+    case focus_dailyGoal
+    case focus_custom_title, focus_custom_focus, focus_custom_shortBreak, focus_custom_longBreak
 
     // Shortcuts
     case shortcut_quickAccess, shortcut_addTitle
     case shortcut_type, shortcut_kind_app, shortcut_kind_folder, shortcut_kind_url, shortcut_kind_command
     case shortcut_name, shortcut_pathOrUrl, shortcut_symbol, shortcut_pick, shortcut_remove
     case shortcut_empty, shortcut_pin, shortcut_unpin, shortcut_launches
+    case shortcut_edit, shortcut_copyPath, shortcut_importApps
+    case shortcut_dropHere, shortcut_dropHint
 
     // Clipboard
     case clip_empty, clip_searchPlaceholder
@@ -121,6 +129,8 @@ enum Loc: String {
     case ai_emptyPrompt, ai_emptyDesktopHint, ai_emptyCLIHint
     case ai_placeholder_cli, ai_placeholder_api, ai_placeholder_desktop
     case ai_desktopOpened, ai_rescan, ai_refreshList
+    case ai_conversations, ai_newConversation, ai_noConversations, ai_untitled
+    case ai_pin, ai_unpin, ai_rename, ai_duplicate
 
     // Settings
     case set_title, set_ai, set_general, set_about
@@ -238,6 +248,24 @@ private enum Dict {
         .focus_notif_breakDoneTitle: "Break over",
         .focus_notif_breakDoneBody: "Back to focus.",
         .focus_sessionsSuffix: "focus left",
+        .focus_mode_classic: "Classic",
+        .focus_mode_extended: "Extended",
+        .focus_mode_short: "Short",
+        .focus_mode_deep: "Deep",
+        .focus_mode_custom: "Custom",
+        .focus_skip: "Skip",
+        .focus_extend5: "+5 min",
+        .focus_endsAt: "ends at",
+        .focus_stat_streak: "Day streak",
+        .focus_stat_sessionsToday: "Today",
+        .focus_stat_focusTime: "Focus time",
+        .focus_autoBreak: "Auto-start breaks",
+        .focus_autoFocus: "Auto-start next focus",
+        .focus_dailyGoal: "Daily goal (sessions)",
+        .focus_custom_title: "Custom durations",
+        .focus_custom_focus: "Focus",
+        .focus_custom_shortBreak: "Short break",
+        .focus_custom_longBreak: "Long break",
 
         .shortcut_quickAccess: "Quick access",
         .shortcut_addTitle: "Add shortcut",
@@ -255,6 +283,11 @@ private enum Dict {
         .shortcut_pin: "Pin to top",
         .shortcut_unpin: "Unpin",
         .shortcut_launches: "Launches",
+        .shortcut_edit: "Edit",
+        .shortcut_copyPath: "Copy path",
+        .shortcut_importApps: "Import apps…",
+        .shortcut_dropHere: "Drop to add",
+        .shortcut_dropHint: "Drop .app files or folders from Finder",
 
         .clip_empty: "Clipboard history is empty\n(copy something → it appears)",
         .clip_searchPlaceholder: "Search…",
@@ -351,6 +384,14 @@ private enum Dict {
         .ai_desktopOpened: "%@ opened. Prompt copied — press ⌘V to paste.",
         .ai_rescan: "Re-scan providers",
         .ai_refreshList: "Refresh",
+        .ai_conversations: "Conversations",
+        .ai_newConversation: "New chat",
+        .ai_noConversations: "No chats yet",
+        .ai_untitled: "Untitled",
+        .ai_pin: "Pin",
+        .ai_unpin: "Unpin",
+        .ai_rename: "Rename",
+        .ai_duplicate: "Duplicate",
 
         .set_title: "Settings",
         .set_ai: "AI",
@@ -483,6 +524,24 @@ private enum Dict {
         .focus_notif_breakDoneTitle: "Mola bitti",
         .focus_notif_breakDoneBody: "Tekrar fokus zamanı.",
         .focus_sessionsSuffix: "fokus",
+        .focus_mode_classic: "Klasik",
+        .focus_mode_extended: "Uzun",
+        .focus_mode_short: "Kısa",
+        .focus_mode_deep: "Derin",
+        .focus_mode_custom: "Özel",
+        .focus_skip: "Atla",
+        .focus_extend5: "+5 dk",
+        .focus_endsAt: "bitiş",
+        .focus_stat_streak: "Gün serisi",
+        .focus_stat_sessionsToday: "Bugün",
+        .focus_stat_focusTime: "Fokus süresi",
+        .focus_autoBreak: "Molayı otomatik başlat",
+        .focus_autoFocus: "Sonraki fokusu otomatik başlat",
+        .focus_dailyGoal: "Günlük hedef (seans)",
+        .focus_custom_title: "Özel süreler",
+        .focus_custom_focus: "Fokus",
+        .focus_custom_shortBreak: "Kısa mola",
+        .focus_custom_longBreak: "Uzun mola",
 
         .shortcut_quickAccess: "Hızlı erişim",
         .shortcut_addTitle: "Kısayol Ekle",
@@ -500,6 +559,11 @@ private enum Dict {
         .shortcut_pin: "Üste sabitle",
         .shortcut_unpin: "Sabitlemeyi kaldır",
         .shortcut_launches: "Açılış sayısı",
+        .shortcut_edit: "Düzenle",
+        .shortcut_copyPath: "Yolu kopyala",
+        .shortcut_importApps: "Uygulamaları içe aktar…",
+        .shortcut_dropHere: "Eklemek için bırak",
+        .shortcut_dropHint: "Finder'dan .app veya klasör sürükle",
 
         .clip_empty: "Pano geçmişi boş\n(kopyala → görünsün)",
         .clip_searchPlaceholder: "Ara…",
@@ -596,6 +660,14 @@ private enum Dict {
         .ai_desktopOpened: "%@ açıldı. Mesaj panoya kopyalandı — ⌘V ile yapıştır.",
         .ai_rescan: "Sağlayıcıları tekrar tara",
         .ai_refreshList: "Yenile",
+        .ai_conversations: "Konuşmalar",
+        .ai_newConversation: "Yeni sohbet",
+        .ai_noConversations: "Henüz sohbet yok",
+        .ai_untitled: "Başlıksız",
+        .ai_pin: "Sabitle",
+        .ai_unpin: "Sabitlemeyi kaldır",
+        .ai_rename: "Yeniden adlandır",
+        .ai_duplicate: "Çoğalt",
 
         .set_title: "Ayarlar",
         .set_ai: "AI",

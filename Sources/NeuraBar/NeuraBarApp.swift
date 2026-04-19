@@ -29,6 +29,7 @@ final class AppStore: ObservableObject {
     let settings = SettingsStore()
     let automation = AutomationStore()
     let recording = RecordingStore()
+    let conversations = AIConversationStore()
 
     init() {
         // Apply saved language override BEFORE views read any strings.

@@ -172,4 +172,136 @@ final class ShortcutStoreTests: NBTestCase {
         XCTAssertTrue(s2.items.first?.pinned ?? false)
         XCTAssertEqual(s2.items.first?.launchCount, 7)
     }
+
+    // MARK: - Update / reorder / color
+
+    func testUpdateReplacesMatchingItem() {
+        let s = ShortcutStore()
+        s.items = [
+            ShortcutItem(name: "a", path: "/a", icon: "star", kind: .app),
+            ShortcutItem(name: "b", path: "/b", icon: "star", kind: .app)
+        ]
+        var changed = s.items[0]
+        changed.name = "renamed"
+        changed.path = "/newpath"
+        s.update(changed)
+        XCTAssertEqual(s.items[0].name, "renamed")
+        XCTAssertEqual(s.items[0].path, "/newpath")
+        XCTAssertEqual(s.items[1].name, "b", "Other items untouched")
+    }
+
+    func testUpdateIgnoresUnknownID() {
+        let s = ShortcutStore()
+        s.items = [ShortcutItem(name: "a", path: "/a", icon: "star", kind: .app)]
+        let ghost = ShortcutItem(name: "ghost", path: "/g", icon: "x", kind: .app)
+        s.update(ghost)
+        XCTAssertEqual(s.items.count, 1)
+        XCTAssertEqual(s.items[0].name, "a")
+    }
+
+    func testReorderMovesItem() {
+        let s = ShortcutStore()
+        s.items = [
+            ShortcutItem(name: "a", path: "/a", icon: "x", kind: .app),
+            ShortcutItem(name: "b", path: "/b", icon: "x", kind: .app),
+            ShortcutItem(name: "c", path: "/c", icon: "x", kind: .app),
+            ShortcutItem(name: "d", path: "/d", icon: "x", kind: .app)
+        ]
+        let a = s.items[0]
+        s.reorder(a, to: 2)
+        XCTAssertEqual(s.items.map { $0.name }, ["b", "c", "a", "d"])
+    }
+
+    func testReorderClampsOutOfRange() {
+        let s = ShortcutStore()
+        s.items = [
+            ShortcutItem(name: "a", path: "/a", icon: "x", kind: .app),
+            ShortcutItem(name: "b", path: "/b", icon: "x", kind: .app)
+        ]
+        s.reorder(s.items[0], to: 99)
+        XCTAssertEqual(s.items.map { $0.name }, ["b", "a"])
+    }
+
+    func testSetColorUpdatesItem() {
+        let s = ShortcutStore()
+        s.items = [ShortcutItem(name: "x", path: "/x", icon: "star", kind: .app)]
+        s.setColor(.purple, for: s.items[0])
+        XCTAssertEqual(s.items[0].color, .purple)
+    }
+
+    // MARK: - Bulk add / from URL
+
+    func testAddFromURLDetectsApp() {
+        let s = ShortcutStore()
+        s.items = []
+        // Safari.app is essentially always present on macOS.
+        let url = URL(fileURLWithPath: "/Applications/Safari.app")
+        if FileManager.default.fileExists(atPath: url.path) {
+            let added = s.addFromURL(url)
+            XCTAssertNotNil(added)
+            XCTAssertEqual(added?.kind, .app)
+            XCTAssertEqual(added?.name, "Safari")
+        }
+    }
+
+    func testAddFromURLDetectsFolder() {
+        let s = ShortcutStore()
+        s.items = []
+        let added = s.addFromURL(URL(fileURLWithPath: "/tmp"))
+        XCTAssertNotNil(added)
+        XCTAssertEqual(added?.kind, .folder)
+        XCTAssertEqual(added?.name, "tmp")
+    }
+
+    func testAddFromURLDedupesByPath() {
+        let s = ShortcutStore()
+        s.items = []
+        _ = s.addFromURL(URL(fileURLWithPath: "/tmp"))
+        let second = s.addFromURL(URL(fileURLWithPath: "/tmp"))
+        XCTAssertNil(second, "Duplicate path should not be re-added")
+        XCTAssertEqual(s.items.count, 1)
+    }
+
+    func testAddFromURLRejectsNonexistent() {
+        let s = ShortcutStore()
+        s.items = []
+        let added = s.addFromURL(URL(fileURLWithPath: "/not-a-real-path-\(UUID())"))
+        XCTAssertNil(added)
+        XCTAssertTrue(s.items.isEmpty)
+    }
+
+    func testBulkAddReturnsCount() {
+        let s = ShortcutStore()
+        s.items = []
+        let urls = [
+            URL(fileURLWithPath: "/tmp"),
+            URL(fileURLWithPath: "/var"),
+            URL(fileURLWithPath: "/not-a-real-path-\(UUID())")
+        ]
+        let added = s.bulkAdd(urls: urls)
+        XCTAssertEqual(added, 2, "Only existing paths should count")
+        XCTAssertEqual(s.items.count, 2)
+    }
+
+    // MARK: - Color tolerant decode
+
+    func testDecodesLegacyShortcutWithoutColor() throws {
+        let legacy = """
+        [{"id":"11111111-1111-1111-1111-111111111111","name":"Old","path":"/old","icon":"star","kind":"app"}]
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode([ShortcutItem].self, from: legacy)
+        // Disambiguate from Optional.none by naming the enum explicitly.
+        XCTAssertEqual(decoded.first?.color, ShortcutColor.none,
+                       "Missing color defaults to ShortcutColor.none")
+    }
+
+    func testColorRoundTripsThroughDisk() {
+        let s1 = ShortcutStore()
+        s1.items = [
+            ShortcutItem(name: "tinted", path: "/t", icon: "star", kind: .app,
+                         color: .pink)
+        ]
+        let s2 = ShortcutStore()
+        XCTAssertEqual(s2.items.first?.color, .pink)
+    }
 }

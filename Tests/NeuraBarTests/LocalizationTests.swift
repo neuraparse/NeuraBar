@@ -89,7 +89,18 @@ final class LocalizationTests: XCTestCase {
             .todo_markDone, .todo_markActive, .todo_noMatch,
             .todo_group_overdue, .todo_group_today, .todo_group_tomorrow,
             .todo_group_thisWeek, .todo_group_later, .todo_group_noDate, .todo_group_completed,
-            .shortcut_pin, .shortcut_unpin, .shortcut_launches
+            .shortcut_pin, .shortcut_unpin, .shortcut_launches,
+            .shortcut_edit, .shortcut_copyPath, .shortcut_importApps,
+            .shortcut_dropHere, .shortcut_dropHint,
+            .focus_mode_classic, .focus_mode_extended, .focus_mode_short,
+            .focus_mode_deep, .focus_mode_custom,
+            .focus_skip, .focus_extend5, .focus_endsAt,
+            .focus_stat_streak, .focus_stat_sessionsToday, .focus_stat_focusTime,
+            .focus_autoBreak, .focus_autoFocus, .focus_dailyGoal,
+            .focus_custom_title, .focus_custom_focus,
+            .focus_custom_shortBreak, .focus_custom_longBreak,
+            .ai_conversations, .ai_newConversation, .ai_noConversations,
+            .ai_untitled, .ai_pin, .ai_unpin, .ai_rename, .ai_duplicate
         ]
         for key in allCases {
             let value = l.t(key)

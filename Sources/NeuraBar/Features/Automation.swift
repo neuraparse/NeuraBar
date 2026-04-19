@@ -16,7 +16,7 @@ struct AutomationStat: Codable, Hashable {
     let value: String
 }
 
-struct AutomationRun: Identifiable, Codable {
+struct AutomationRun: Identifiable, Codable, Equatable {
     let id: UUID
     let taskID: String
     let taskTitle: String

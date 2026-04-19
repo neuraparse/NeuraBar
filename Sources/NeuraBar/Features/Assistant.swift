@@ -1,14 +1,46 @@
 import SwiftUI
 import AppKit
 
-struct ChatMessage: Identifiable {
-    let id = UUID()
-    let role: Role
+struct ChatMessage: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var role: Role
     var text: String
     var providerID: String?
     var automationRun: AutomationRun?  // populated when this bubble is an automation result
     var startedAt: Date = Date()       // used for "elapsed" rendering on streaming msgs
-    enum Role { case user, assistant, system, automation }
+
+    enum Role: String, Codable { case user, assistant, system, automation }
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, text, providerID, automationRun, startedAt
+    }
+
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        text: String,
+        providerID: String? = nil,
+        automationRun: AutomationRun? = nil,
+        startedAt: Date = Date()
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.providerID = providerID
+        self.automationRun = automationRun
+        self.startedAt = startedAt
+    }
+
+    // Tolerant decoder — any missing field falls back to a sensible default.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
+        role = (try? c.decode(Role.self, forKey: .role)) ?? .assistant
+        text = (try? c.decode(String.self, forKey: .text)) ?? ""
+        providerID = try? c.decode(String.self, forKey: .providerID)
+        automationRun = try? c.decode(AutomationRun.self, forKey: .automationRun)
+        startedAt = (try? c.decode(Date.self, forKey: .startedAt)) ?? Date()
+    }
 }
 
 /// Pending approval request — shown as an inline banner with Approve / Cancel.
@@ -24,7 +56,6 @@ struct AssistantView: View {
     @EnvironmentObject var l10n: Localization
     @EnvironmentObject var store: AppStore
     @State private var input: String = ""
-    @State private var messages: [ChatMessage] = []
     @State private var sending = false
     @State private var error: String?
     @State private var providers: [AIProvider] = []
@@ -34,6 +65,19 @@ struct AssistantView: View {
     @State private var showSlashMenu = false
     @State private var pending: PendingApproval?
     @State private var elapsedTick = 0  // forces re-render for live elapsed counter
+    @State private var showHistoryPicker = false
+    @State private var renamingID: UUID?
+    @State private var renameBuffer = ""
+
+    /// Below this width the conversation sidebar collapses into an overlay
+    /// picker — keeps the 420 px popover usable.
+    private static let splitThreshold: CGFloat = 520
+
+    /// Reads straight from the conversation store — views always see the
+    /// current persisted transcript.
+    private var messages: [ChatMessage] {
+        store.conversations.currentMessages
+    }
 
     private let elapsedTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -43,9 +87,50 @@ struct AssistantView: View {
     ]
 
     var body: some View {
+        GeometryReader { geo in
+            let isWide = geo.size.width >= Self.splitThreshold
+            Group {
+                if isWide {
+                    HStack(spacing: 8) {
+                        conversationSidebar
+                            .frame(minWidth: 170, idealWidth: 180, maxWidth: 200)
+                        Divider().opacity(0.3)
+                        chatPane
+                    }
+                } else {
+                    VStack(spacing: 6) {
+                        compactHistoryBar
+                        chatPane
+                    }
+                }
+            }
+            .overlay(alignment: .top) {
+                if showHistoryPicker && !isWide {
+                    compactHistoryOverlay
+                        .transition(.opacity.combined(with: .offset(y: -4)))
+                }
+            }
+            .animation(.spring(duration: 0.22, bounce: 0.15), value: isWide)
+            .animation(.spring(duration: 0.22, bounce: 0.15), value: showHistoryPicker)
+        }
+        .onAppear(perform: refreshProviders)
+        .onChange(of: settings.data.claudeAPIKey) { refreshProviders() }
+        .onChange(of: settings.data.openaiAPIKey) { refreshProviders() }
+        .onReceive(elapsedTimer) { _ in
+            if sending { elapsedTick &+= 1 }
+        }
+        .onChange(of: input) { _, newValue in
+            let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+            showSlashMenu = trimmed.hasPrefix("/") && !trimmed.contains(" ")
+        }
+        .background(keyboardShortcuts)
+    }
+
+    // MARK: - Chat pane (current conversation)
+
+    private var chatPane: some View {
         VStack(spacing: 8) {
             providerBar
-
             if providers.isEmpty {
                 emptyStateNoProviders
             } else {
@@ -56,16 +141,237 @@ struct AssistantView: View {
                 if showSlashMenu { slashMenu }
             }
         }
-        .onAppear(perform: refreshProviders)
-        .onChange(of: settings.data.claudeAPIKey) { refreshProviders() }
-        .onChange(of: settings.data.openaiAPIKey) { refreshProviders() }
-        .onReceive(elapsedTimer) { _ in
-            if sending { elapsedTick &+= 1 }
+    }
+
+    // MARK: - Conversation sidebar (wide mode)
+
+    private var conversationSidebar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(l10n.t(.ai_conversations))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .kerning(0.4)
+                Spacer()
+                Button {
+                    newConversation()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(PressableStyle())
+                .help(l10n.t(.ai_newConversation))
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if store.conversations.items.isEmpty {
+                        Text(l10n.t(.ai_noConversations))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 12)
+                    } else {
+                        ForEach(store.conversations.sorted) { conv in
+                            conversationRow(conv)
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .offset(y: -3)),
+                                    removal: .opacity.combined(with: .scale(scale: 0.95))
+                                ))
+                        }
+                    }
+                }
+                .animation(.spring(duration: 0.26, bounce: 0.15), value: store.conversations.items)
+            }
         }
-        .onChange(of: input) { _, newValue in
-            // Show slash menu when the user starts with "/" and hasn't added a space.
-            let trimmed = newValue.trimmingCharacters(in: .whitespaces)
-            showSlashMenu = trimmed.hasPrefix("/") && !trimmed.contains(" ")
+    }
+
+    private func conversationRow(_ conv: AIConversation) -> some View {
+        let selected = store.conversations.currentID == conv.id
+        return Button {
+            withAnimation(.spring(duration: 0.2, bounce: 0.15)) {
+                store.conversations.currentID = conv.id
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 5) {
+                if conv.pinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 2)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(conv.title.isEmpty ? l10n.t(.ai_untitled) : conv.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .foregroundStyle(selected ? Color.accentColor : .primary)
+                    if !conv.preview.isEmpty {
+                        Text(conv.preview)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selected ? Color.accentColor.opacity(0.15) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .contextMenu { conversationContextMenu(conv) }
+    }
+
+    @ViewBuilder
+    private func conversationContextMenu(_ conv: AIConversation) -> some View {
+        Button(conv.pinned ? l10n.t(.ai_unpin) : l10n.t(.ai_pin)) {
+            store.conversations.togglePin(conv.id)
+        }
+        Button(l10n.t(.ai_rename)) {
+            renamingID = conv.id
+            renameBuffer = conv.title
+        }
+        Button(l10n.t(.ai_duplicate)) {
+            store.conversations.duplicate(conv.id)
+        }
+        Divider()
+        Button(l10n.t(.delete), role: .destructive) {
+            store.conversations.delete(conv.id)
+        }
+    }
+
+    // MARK: - Compact history bar + overlay
+
+    private var compactHistoryBar: some View {
+        HStack(spacing: 6) {
+            Button {
+                withAnimation(.spring(duration: 0.22, bounce: 0.2)) {
+                    showHistoryPicker.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(store.conversations.current?.title ?? l10n.t(.ai_newConversation))
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    Image(systemName: showHistoryPicker ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06))
+                )
+            }
+            .buttonStyle(PressableStyle())
+
+            Spacer()
+
+            Button {
+                newConversation()
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.accentColor)
+                    .symbolEffect(.bounce, value: store.conversations.items.count)
+            }
+            .buttonStyle(PressableStyle())
+            .help(l10n.t(.ai_newConversation))
+        }
+    }
+
+    private var compactHistoryOverlay: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.conversations.sorted) { conv in
+                        Button {
+                            withAnimation(.spring(duration: 0.2)) {
+                                store.conversations.currentID = conv.id
+                                showHistoryPicker = false
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if conv.pinned {
+                                    Image(systemName: "pin.fill")
+                                        .font(.system(size: 7))
+                                        .foregroundStyle(.orange)
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(conv.title.isEmpty ? l10n.t(.ai_untitled) : conv.title)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .lineLimit(1)
+                                    if !conv.preview.isEmpty {
+                                        Text(conv.preview)
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer()
+                                if store.conversations.currentID == conv.id {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PressableStyle())
+                        .nbHoverHighlight(cornerRadius: 5, intensity: 0.08)
+                        .contextMenu { conversationContextMenu(conv) }
+                    }
+                    if store.conversations.items.isEmpty {
+                        Text(l10n.t(.ai_noConversations))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 220)
+        .padding(.top, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.regularMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.2), radius: 14, y: 4)
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Keyboard shortcuts
+
+    private var keyboardShortcuts: some View {
+        VStack(spacing: 0) {
+            Button("") { newConversation() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .frame(width: 0, height: 0).opacity(0)
+        }
+        .allowsHitTesting(false)
+    }
+
+    // MARK: - Actions
+
+    private func newConversation() {
+        withAnimation(.spring(duration: 0.24, bounce: 0.2)) {
+            store.conversations.newConversation(providerName: selected?.name)
+            showHistoryPicker = false
+            input = ""
+            error = nil
         }
     }
 
@@ -481,22 +787,18 @@ struct AssistantView: View {
     }
 
     private func runAutomation(_ def: AutomationDef) {
-        // Insert a placeholder "running" bubble we update on completion.
         let placeholder = ChatMessage(
             role: .automation,
             text: l10n.t(def.titleKey),
             providerID: def.id
         )
-        messages.append(placeholder)
+        store.conversations.append(placeholder, providerName: selected?.name)
         let placeholderID = placeholder.id
 
         Task { @MainActor in
             await store.automation.run(def, l10n: l10n)
-            if let run = store.automation.history.first(where: { $0.taskID == def.id }),
-               let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
-                var updated = messages[idx]
-                updated.automationRun = run
-                messages[idx] = updated
+            if let run = store.automation.history.first(where: { $0.taskID == def.id }) {
+                store.conversations.updateMessage(id: placeholderID) { $0.automationRun = run }
             }
         }
     }
@@ -570,31 +872,30 @@ struct AssistantView: View {
                 .replacingOccurrences(of: "automate ", with: "")
                 .trimmingCharacters(in: .whitespaces)
             if let def = AutomationCatalog.all.first(where: { $0.id.lowercased() == token.lowercased() }) {
-                messages.append(ChatMessage(role: .user, text: text))
+                store.conversations.append(ChatMessage(role: .user, text: text), providerName: selected?.name)
                 requestAutomation(def, reason: "You ran")
                 return
             }
-            // Unknown slash command — fall through to the model
-            messages.append(ChatMessage(
+            store.conversations.append(ChatMessage(
                 role: .system,
                 text: "Unknown command: /\(token). Try /screenshots, /trash, /heic …"
             ))
             return
         }
 
-        messages.append(ChatMessage(role: .user, text: text))
+        store.conversations.append(ChatMessage(role: .user, text: text), providerName: provider.name)
 
         switch provider.kind {
         case .desktop:
             AIRun.openDesktop(provider: provider, prompt: text)
-            messages.append(ChatMessage(
+            store.conversations.append(ChatMessage(
                 role: .system,
                 text: l10n.t(.ai_desktopOpened, provider.name),
                 providerID: provider.id
             ))
         case .cli:
             let msg = ChatMessage(role: .assistant, text: "", providerID: provider.id)
-            messages.append(msg)
+            store.conversations.append(msg, providerName: provider.name)
             let msgID = msg.id
             sending = true
             let proc = AIRun.streamCLI(
@@ -602,19 +903,17 @@ struct AssistantView: View {
                 prompt: text,
                 settings: settings.data,
                 onChunk: { chunk in
-                    if let i = messages.firstIndex(where: { $0.id == msgID }) {
-                        messages[i].text += chunk
-                    }
+                    store.conversations.updateMessage(id: msgID) { $0.text += chunk }
                 },
                 onDone: { err in
                     sending = false
                     runningProcess = nil
                     if let err = err {
                         // Only surface error if we didn't get any output
-                        if let i = messages.firstIndex(where: { $0.id == msgID }),
-                           messages[i].text.isEmpty {
+                        if let currentMsg = store.conversations.currentMessages.first(where: { $0.id == msgID }),
+                           currentMsg.text.isEmpty {
                             error = err.localizedDescription
-                            messages.removeAll(where: { $0.id == msgID })
+                            store.conversations.removeMessage(id: msgID)
                         }
                     }
                 }
@@ -623,8 +922,8 @@ struct AssistantView: View {
 
         case .api:
             sending = true
-            let history = messages
-                .filter { $0.role != .system }
+            let history = store.conversations.currentMessages
+                .filter { $0.role != .system && $0.role != .automation }
                 .map { ($0.role == .user ? "user" : "assistant", $0.text) }
 
             Task {
@@ -644,7 +943,10 @@ struct AssistantView: View {
                         )
                     }
                     await MainActor.run {
-                        messages.append(ChatMessage(role: .assistant, text: reply, providerID: provider.id))
+                        store.conversations.append(
+                            ChatMessage(role: .assistant, text: reply, providerID: provider.id),
+                            providerName: provider.name
+                        )
                         sending = false
                     }
                 } catch {
