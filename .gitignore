@@ -1,0 +1,18 @@
+# Build artifacts
+.build/
+*.app/
+*.xcodeproj/
+Package.resolved
+
+# macOS metadata
+.DS_Store
+*.swp
+._*
+
+# Editor
+.vscode/
+.idea/
+*.xcworkspace/
+
+# Logs / local state
+*.log
