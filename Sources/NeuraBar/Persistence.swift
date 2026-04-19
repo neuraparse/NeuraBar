@@ -6,6 +6,10 @@ enum Persistence {
     /// Tests set this to a temp dir so they don't pollute the real user state.
     nonisolated(unsafe) static var overrideDir: URL?
 
+    /// Runtime override set by the Settings sheet when the user picks a new
+    /// data location. Cleared on `resetDataLocation()`.
+    nonisolated(unsafe) static var userDir: URL?
+
     static var supportDir: URL {
         if let override = overrideDir {
             if !FileManager.default.fileExists(atPath: override.path) {
@@ -13,12 +17,57 @@ enum Persistence {
             }
             return override
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("NeuraBar", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let user = userDir {
+            if !FileManager.default.fileExists(atPath: user.path) {
+                try? FileManager.default.createDirectory(at: user, withIntermediateDirectories: true)
+            }
+            return user
         }
-        return dir
+        return DataLocationResolver.applicationSupportURL.also { dir in
+            if !FileManager.default.fileExists(atPath: dir.path) {
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+        }
+    }
+
+    /// Called at launch + whenever the user changes the data location in
+    /// Settings. Applies the new URL and returns the resolved path so the
+    /// caller can show it in the UI.
+    @discardableResult
+    static func applyDataLocation(_ config: DataLocationConfig) -> URL {
+        let url = DataLocationResolver.resolve(config)
+        userDir = url
+        return url
+    }
+
+    // MARK: - Bootstrap (location pointer)
+    //
+    // The data-location preference itself has to live somewhere that's
+    // always reachable even before `supportDir` is resolved — otherwise
+    // we can't know where to look for the rest of the data on launch.
+    // `location.json` stays in Application Support forever; everything
+    // else follows whichever URL it points at.
+
+    private static var bootstrapURL: URL {
+        let base = DataLocationResolver.applicationSupportURL
+        if !FileManager.default.fileExists(atPath: base.path) {
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        }
+        return base.appendingPathComponent("location.json")
+    }
+
+    static func loadDataLocation() -> DataLocationConfig {
+        guard let data = try? Data(contentsOf: bootstrapURL),
+              let cfg = try? JSONDecoder().decode(DataLocationConfig.self, from: data) else {
+            return DataLocationConfig()
+        }
+        return cfg
+    }
+
+    static func saveDataLocation(_ config: DataLocationConfig) {
+        if let data = try? JSONEncoder().encode(config) {
+            try? data.write(to: bootstrapURL, options: .atomic)
+        }
     }
 
     static func load<T: Decodable>(_ type: T.Type, from file: String) -> T? {
@@ -32,6 +81,14 @@ enum Persistence {
         if let data = try? JSONEncoder().encode(value) {
             try? data.write(to: url, options: .atomic)
         }
+    }
+}
+
+/// Tiny Kotlin-style `also` on URL so we can create-on-access inline.
+private extension URL {
+    func also(_ block: (URL) -> Void) -> URL {
+        block(self)
+        return self
     }
 }
 
@@ -354,23 +411,8 @@ struct SettingsSheet: View {
                 .padding(NB.sp4)
                 .nbCard()
 
-                // Data folder
-                VStack(alignment: .leading, spacing: NB.sp2) {
-                    Text(l10n.t(.set_dataFolder))
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(Persistence.supportDir.path)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button {
-                        NSWorkspace.shared.open(Persistence.supportDir)
-                    } label: {
-                        Label(l10n.t(.set_revealFolder), systemImage: "folder")
-                            .font(.caption)
-                    }
-                }
-                .padding(NB.sp4)
-                .nbCard()
+                DataLocationCard()
+                    .environmentObject(l10n)
 
                 // Shortcuts
                 VStack(alignment: .leading, spacing: NB.sp2) {

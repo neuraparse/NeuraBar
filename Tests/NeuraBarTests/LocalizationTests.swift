@@ -114,7 +114,11 @@ final class LocalizationTests: XCTestCase {
             .perm_allow, .perm_openSettings,
             .perm_screen_title, .perm_screen_request_body, .perm_screen_denied_body,
             .perm_mic_title, .perm_mic_request_body, .perm_mic_denied_body,
-            .perm_restart_title, .perm_restart_body, .perm_restart_cta
+            .perm_restart_title, .perm_restart_body, .perm_restart_cta,
+            .data_loc_title, .data_loc_explanation, .data_loc_current,
+            .data_loc_local, .data_loc_icloud, .data_loc_gdrive, .data_loc_custom,
+            .data_loc_notAvailable, .data_loc_pickFolder,
+            .data_loc_migrated, .data_loc_switched
         ]
         for key in allCases {
             let value = l.t(key)

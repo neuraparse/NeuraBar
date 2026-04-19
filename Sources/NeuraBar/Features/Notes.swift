@@ -864,27 +864,122 @@ struct NoteEditor: View {
             .padding(.horizontal, 6)
             .padding(.bottom, 6)
             .transition(.opacity)
+            // Drag-drop images directly onto the editor.
+            .dropDestination(for: URL.self) { urls, _ in
+                handleImageDrop(urls)
+            }
+            .dropDestination(for: Data.self) { datas, _ in
+                handleImageDataDrop(datas)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                pasteImageButton
+            }
     }
 
-    /// Live markdown preview using Foundation's AttributedString(markdown:).
-    /// Works on macOS 14+ and handles bold/italic/code/lists/links.
+    /// Preview pane — splits the body into text + image blocks and renders
+    /// each. Text blocks use AttributedString(markdown:) for inline styling;
+    /// image blocks render the actual bitmap via NoteAttachments.
     private var previewPane: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                if let attr = try? AttributedString(markdown: note.body,
-                                                   options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                    Text(attr)
-                        .font(.system(size: 12))
-                        .textSelection(.enabled)
-                } else {
-                    Text(note.body)
-                        .font(.system(size: 12))
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(NoteBodyParser.parse(note.body).enumerated()),
+                        id: \.offset) { _, block in
+                    switch block {
+                    case .text(let body):
+                        if let attr = try? AttributedString(markdown: body,
+                                                            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                            Text(attr)
+                                .font(.system(size: 12))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(body)
+                                .font(.system(size: 12))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    case .image(let token, let alt):
+                        NoteImageView(token: token, alt: alt)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
         }
         .transition(.opacity)
+    }
+
+    /// Small button over the editor that pastes an image from the
+    /// clipboard, if there is one. Exposed as a button + ⌘V shortcut —
+    /// SwiftUI's default ⌘V inside TextEditor would paste the file path,
+    /// not the image itself.
+    private var pasteImageButton: some View {
+        Button {
+            pasteClipboardImage()
+        } label: {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(6)
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        }
+        .buttonStyle(PressableStyle())
+        .help("Paste image from clipboard")
+        .padding(8)
+    }
+
+    // MARK: - Image handlers
+
+    private func handleImageDrop(_ urls: [URL]) -> Bool {
+        var any = false
+        for url in urls {
+            if let ref = NoteAttachments.store(sourceURL: url) {
+                appendImage(ref)
+                any = true
+            }
+        }
+        return any
+    }
+
+    private func handleImageDataDrop(_ datas: [Data]) -> Bool {
+        var any = false
+        for data in datas {
+            if let ref = NoteAttachments.store(data: data) {
+                appendImage(ref)
+                any = true
+            }
+        }
+        return any
+    }
+
+    private func pasteClipboardImage() {
+        let pb = NSPasteboard.general
+        // Prefer TIFF since that's what screenshot/copy-image puts on the
+        // pasteboard; fall back to file URL and raw PNG.
+        if let tiff = pb.data(forType: .tiff),
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            if let ref = NoteAttachments.store(data: png, preferredExtension: "png") {
+                appendImage(ref)
+            }
+            return
+        }
+        if let url = pb.readObjects(forClasses: [NSURL.self], options: nil)?.first as? URL {
+            _ = handleImageDrop([url])
+            return
+        }
+    }
+
+    private func appendImage(_ markdownRef: String) {
+        // Separate from preceding text with a newline so the preview parser
+        // treats it as its own block.
+        if note.body.isEmpty {
+            note.body = markdownRef
+        } else if note.body.hasSuffix("\n") {
+            note.body += markdownRef
+        } else {
+            note.body += "\n\n" + markdownRef
+        }
     }
 
     // MARK: Status bar

@@ -51,6 +51,12 @@ enum Loc: String {
     case perm_mic_title, perm_mic_request_body, perm_mic_denied_body
     case perm_restart_title, perm_restart_body, perm_restart_cta
 
+    // Data location
+    case data_loc_title, data_loc_explanation, data_loc_current
+    case data_loc_local, data_loc_icloud, data_loc_gdrive, data_loc_custom
+    case data_loc_notAvailable, data_loc_pickFolder
+    case data_loc_migrated, data_loc_switched
+
     // Common
     case save, cancel, close, add, remove, delete, edit, done
     case search, loading, thinking, stop
@@ -220,6 +226,18 @@ private enum Dict {
         .perm_restart_title: "Restart to finish",
         .perm_restart_body: "macOS cached the old permission state. Relaunch NeuraBar so capture works.",
         .perm_restart_cta: "Restart",
+
+        .data_loc_title: "Data location",
+        .data_loc_explanation: "Store your data in iCloud Drive or Google Drive so it syncs across Macs. Changing the location migrates existing notes, todos, clipboard history, and settings.",
+        .data_loc_current: "Current path",
+        .data_loc_local: "Local only (Application Support)",
+        .data_loc_icloud: "iCloud Drive",
+        .data_loc_gdrive: "Google Drive",
+        .data_loc_custom: "Custom folder…",
+        .data_loc_notAvailable: "Not available — desktop client not configured",
+        .data_loc_pickFolder: "Pick a folder…",
+        .data_loc_migrated: "Moved %d items",
+        .data_loc_switched: "Location updated",
 
         .save: "Save", .cancel: "Cancel", .close: "Close", .add: "Add",
         .remove: "Remove", .delete: "Delete", .edit: "Edit", .done: "Done",
@@ -531,6 +549,18 @@ private enum Dict {
         .perm_restart_title: "Bitirmek için yeniden başlat",
         .perm_restart_body: "macOS eski izin durumunu önbelleklemiş. NeuraBar'ı yeniden başlatınca çalışır.",
         .perm_restart_cta: "Yeniden başlat",
+
+        .data_loc_title: "Veri konumu",
+        .data_loc_explanation: "Verilerini iCloud Drive ya da Google Drive'da tutarak Mac'lerin arasında senkronize et. Konumu değiştirince notlar, görevler, pano ve ayarlar taşınır.",
+        .data_loc_current: "Geçerli yol",
+        .data_loc_local: "Sadece yerel (Application Support)",
+        .data_loc_icloud: "iCloud Drive",
+        .data_loc_gdrive: "Google Drive",
+        .data_loc_custom: "Özel klasör…",
+        .data_loc_notAvailable: "Uygun değil — masaüstü istemcisi kurulu değil",
+        .data_loc_pickFolder: "Klasör seç…",
+        .data_loc_migrated: "%d öğe taşındı",
+        .data_loc_switched: "Konum güncellendi",
 
         .save: "Kaydet", .cancel: "İptal", .close: "Kapat", .add: "Ekle",
         .remove: "Kaldır", .delete: "Sil", .edit: "Düzenle", .done: "Tamam",

@@ -27,19 +27,36 @@ struct NeuraBarApp: App {
 
 /// Holds all feature stores so they persist while the popover is reopened.
 final class AppStore: ObservableObject {
-    let todos = TodoStore()
-    let notes = NoteStore()
-    let pomodoro = PomodoroTimer()
-    let clipboard = ClipboardManager()
-    let system = SystemMonitor()
-    let shortcuts = ShortcutStore()
-    let settings = SettingsStore()
-    let automation = AutomationStore()
-    let recording = RecordingStore()
-    let conversations = AIConversationStore()
+    let todos: TodoStore
+    let notes: NoteStore
+    let pomodoro: PomodoroTimer
+    let clipboard: ClipboardManager
+    let system: SystemMonitor
+    let shortcuts: ShortcutStore
+    let settings: SettingsStore
+    let automation: AutomationStore
+    let recording: RecordingStore
+    let conversations: AIConversationStore
 
     init() {
-        // Apply saved language override BEFORE views read any strings.
+        // Bootstrap the data location FIRST — before any sub-store loads
+        // its JSON. Swift normally runs stored-property initializers before
+        // the init body; we keep them lazy-style (assigned here) so the
+        // bootstrap decides where they read from.
+        let locationConfig = Persistence.loadDataLocation()
+        Persistence.applyDataLocation(locationConfig)
+
+        self.todos = TodoStore()
+        self.notes = NoteStore()
+        self.pomodoro = PomodoroTimer()
+        self.clipboard = ClipboardManager()
+        self.system = SystemMonitor()
+        self.shortcuts = ShortcutStore()
+        self.settings = SettingsStore()
+        self.automation = AutomationStore()
+        self.recording = RecordingStore()
+        self.conversations = AIConversationStore()
+
         Localization.shared.apply(override: settings.data.language)
         clipboard.start()
         system.start()
