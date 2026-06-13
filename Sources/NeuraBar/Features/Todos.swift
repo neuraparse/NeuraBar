@@ -672,7 +672,7 @@ struct TodoRow: View {
         let cal = Calendar.current
         let now = Date()
         if cal.isDateInToday(date) { return l10n.t(.todo_group_today) }
-        if cal.isDateInYesterday(date) { return "yday" }
+        if cal.isDateInYesterday(date) { return l10n.t(.todo_due_yesterday) }
         if cal.isDate(date, inSameDayAs: cal.date(byAdding: .day, value: 1, to: now) ?? now) {
             return l10n.t(.todo_group_tomorrow)
         }

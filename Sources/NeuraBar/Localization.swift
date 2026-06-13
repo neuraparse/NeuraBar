@@ -23,7 +23,9 @@ enum SupportedLanguage: String, CaseIterable, Codable, Identifiable {
 }
 
 /// String keys — every user-facing string gets one.
-enum Loc: String {
+/// `CaseIterable` so `LocalizationTests` can verify *every* key has a
+/// translation, instead of relying on a hand-maintained list that drifts.
+enum Loc: String, CaseIterable {
     // App / header
     case appName
     case appTagline
@@ -55,7 +57,7 @@ enum Loc: String {
     case data_loc_title, data_loc_explanation, data_loc_current
     case data_loc_local, data_loc_icloud, data_loc_gdrive, data_loc_custom
     case data_loc_notAvailable, data_loc_pickFolder
-    case data_loc_migrated, data_loc_switched
+    case data_loc_migrated, data_loc_switched, data_loc_migrateFailed
 
     // Common
     case save, cancel, close, add, remove, delete, edit, done
@@ -64,7 +66,7 @@ enum Loc: String {
     case copied, copy
 
     // Header buttons
-    case commandPalette, settings, quit
+    case commandPalette, settings, quit, openInWindow
 
     // Command palette
     case palette_searchPlaceholder, palette_noResults
@@ -83,6 +85,7 @@ enum Loc: String {
     case todo_markDone, todo_markActive
     case todo_group_overdue, todo_group_today, todo_group_tomorrow
     case todo_group_thisWeek, todo_group_later, todo_group_noDate, todo_group_completed
+    case todo_due_yesterday
 
     // Pomodoro
     case focus_start, focus_resume, focus_pause, focus_reset
@@ -143,13 +146,15 @@ enum Loc: String {
     case auto_noRuns, auto_history, auto_clearHistory
     case auto_success, auto_failed, auto_stat_moved, auto_stat_deleted
     case auto_stat_skipped, auto_stat_converted, auto_stat_total, auto_stat_size, auto_stat_duration
+    case auto_confirm_title, auto_confirm_message
+    case auto_freed, auto_locked, auto_displaySlept, auto_hiddenOn, auto_hiddenOff, auto_derivedNotFound
 
     // AI assistant
     case ai_providers_count, ai_providers_emptyTitle, ai_providers_emptyBody
     case ai_picker_title, ai_picker_hint, ai_cli, ai_api, ai_desktop
     case ai_emptyPrompt, ai_emptyDesktopHint, ai_emptyCLIHint
     case ai_placeholder_cli, ai_placeholder_api, ai_placeholder_desktop
-    case ai_desktopOpened, ai_rescan, ai_refreshList
+    case ai_desktopOpened, ai_rescan, ai_refreshList, ai_openInApp
     case ai_conversations, ai_newConversation, ai_noConversations, ai_untitled
     case ai_pin, ai_unpin, ai_rename, ai_duplicate
 
@@ -238,6 +243,7 @@ private enum Dict {
         .data_loc_pickFolder: "Pick a folder…",
         .data_loc_migrated: "Moved %d items",
         .data_loc_switched: "Location updated",
+        .data_loc_migrateFailed: "Migration failed — location unchanged",
 
         .save: "Save", .cancel: "Cancel", .close: "Close", .add: "Add",
         .remove: "Remove", .delete: "Delete", .edit: "Edit", .done: "Done",
@@ -248,6 +254,7 @@ private enum Dict {
         .commandPalette: "Command palette (⌘K)",
         .settings: "Settings (⌘,)",
         .quit: "Quit (⌘Q)",
+        .openInWindow: "Open in window",
 
         .palette_searchPlaceholder: "Search or type a command…",
         .palette_noResults: "No results",
@@ -294,6 +301,7 @@ private enum Dict {
         .todo_group_later: "Later",
         .todo_group_noDate: "Someday",
         .todo_group_completed: "Completed",
+        .todo_due_yesterday: "Yesterday",
 
         .focus_start: "Start", .focus_resume: "Resume",
         .focus_pause: "Pause", .focus_reset: "Reset",
@@ -434,6 +442,14 @@ private enum Dict {
         .auto_stat_total: "Total",
         .auto_stat_size: "Size",
         .auto_stat_duration: "Duration",
+        .auto_confirm_title: "Run this automation?",
+        .auto_confirm_message: "This action can't be undone.",
+        .auto_freed: "Freed %@",
+        .auto_locked: "Screen locked",
+        .auto_displaySlept: "Display slept",
+        .auto_hiddenOn: "Hidden files: ON",
+        .auto_hiddenOff: "Hidden files: OFF",
+        .auto_derivedNotFound: "DerivedData not found",
 
         .ai_providers_count: "providers",
         .ai_providers_emptyTitle: "No AI provider found",
@@ -452,6 +468,7 @@ private enum Dict {
         .ai_desktopOpened: "%@ opened. Prompt copied — press ⌘V to paste.",
         .ai_rescan: "Re-scan providers",
         .ai_refreshList: "Refresh",
+        .ai_openInApp: "Open in app",
         .ai_conversations: "Conversations",
         .ai_newConversation: "New chat",
         .ai_noConversations: "No chats yet",
@@ -561,6 +578,7 @@ private enum Dict {
         .data_loc_pickFolder: "Klasör seç…",
         .data_loc_migrated: "%d öğe taşındı",
         .data_loc_switched: "Konum güncellendi",
+        .data_loc_migrateFailed: "Taşıma başarısız — konum değişmedi",
 
         .save: "Kaydet", .cancel: "İptal", .close: "Kapat", .add: "Ekle",
         .remove: "Kaldır", .delete: "Sil", .edit: "Düzenle", .done: "Tamam",
@@ -571,6 +589,7 @@ private enum Dict {
         .commandPalette: "Komut paleti (⌘K)",
         .settings: "Ayarlar (⌘,)",
         .quit: "Çıkış (⌘Q)",
+        .openInWindow: "Pencerede aç",
 
         .palette_searchPlaceholder: "Ara veya komut yaz…",
         .palette_noResults: "Sonuç yok",
@@ -617,6 +636,7 @@ private enum Dict {
         .todo_group_later: "Sonra",
         .todo_group_noDate: "Bir gün",
         .todo_group_completed: "Tamamlanan",
+        .todo_due_yesterday: "Dün",
 
         .focus_start: "Başla", .focus_resume: "Devam",
         .focus_pause: "Duraklat", .focus_reset: "Sıfırla",
@@ -757,6 +777,14 @@ private enum Dict {
         .auto_stat_total: "Toplam",
         .auto_stat_size: "Boyut",
         .auto_stat_duration: "Süre",
+        .auto_confirm_title: "Bu otomasyon çalıştırılsın mı?",
+        .auto_confirm_message: "Bu işlem geri alınamaz.",
+        .auto_freed: "%@ boşaltıldı",
+        .auto_locked: "Ekran kilitlendi",
+        .auto_displaySlept: "Ekran uyutuldu",
+        .auto_hiddenOn: "Gizli dosyalar: AÇIK",
+        .auto_hiddenOff: "Gizli dosyalar: KAPALI",
+        .auto_derivedNotFound: "DerivedData bulunamadı",
 
         .ai_providers_count: "sağlayıcı",
         .ai_providers_emptyTitle: "Hiçbir AI sağlayıcısı bulunamadı",
@@ -775,6 +803,7 @@ private enum Dict {
         .ai_desktopOpened: "%@ açıldı. Mesaj panoya kopyalandı — ⌘V ile yapıştır.",
         .ai_rescan: "Sağlayıcıları tekrar tara",
         .ai_refreshList: "Yenile",
+        .ai_openInApp: "Uygulamada aç",
         .ai_conversations: "Konuşmalar",
         .ai_newConversation: "Yeni sohbet",
         .ai_noConversations: "Henüz sohbet yok",

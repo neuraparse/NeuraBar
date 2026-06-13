@@ -58,6 +58,10 @@ enum AIDetector {
     }
 
     private static func whichUncached(_ name: String) -> String? {
+        // `name` only ever comes from the hardcoded cliDefs list, but guard
+        // anyway: it's interpolated into a zsh `command -v` below, so a name
+        // with shell metacharacters must never reach that path.
+        guard name.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil else { return nil }
         let candidates = [
             "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin",
             NSString("~/.local/bin").expandingTildeInPath,
@@ -165,7 +169,7 @@ enum AIDetector {
             out.append(AIProvider(
                 id: "claude-desktop",
                 name: "Claude Desktop",
-                subtitle: "Uygulamada aç",
+                subtitle: L.t(.ai_openInApp),
                 icon: "macwindow",
                 kind: .desktop,
                 bundlePath: p
@@ -175,7 +179,7 @@ enum AIDetector {
             out.append(AIProvider(
                 id: "chatgpt-desktop",
                 name: "ChatGPT",
-                subtitle: "Uygulamada aç",
+                subtitle: L.t(.ai_openInApp),
                 icon: "macwindow",
                 kind: .desktop,
                 bundlePath: p
@@ -185,7 +189,7 @@ enum AIDetector {
             out.append(AIProvider(
                 id: "codex-desktop",
                 name: "Codex",
-                subtitle: "Uygulamada aç",
+                subtitle: L.t(.ai_openInApp),
                 icon: "macwindow",
                 kind: .desktop,
                 bundlePath: p
@@ -195,7 +199,7 @@ enum AIDetector {
             out.append(AIProvider(
                 id: "atlas-desktop",
                 name: "ChatGPT Atlas",
-                subtitle: "Uygulamada aç",
+                subtitle: L.t(.ai_openInApp),
                 icon: "macwindow",
                 kind: .desktop,
                 bundlePath: p
@@ -252,21 +256,34 @@ enum AIRun {
         task.standardOutput = stdout
         task.standardError = stderr
 
+        // Streaming reads arrive on arbitrary 16–64KB boundaries that can split
+        // a multi-byte UTF-8 sequence (common with Turkish text / emoji / box
+        // chars). Buffer raw bytes and only emit once the buffer decodes
+        // cleanly, holding back a partial trailing char until the next read —
+        // otherwise those bytes were silently dropped.
+        var stdoutPending = Data()
+        var stderrAccum = ""
+
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty { return }
-            if let s = String(data: data, encoding: .utf8) {
-                Task { @MainActor in onChunk(s) }
+            stdoutPending.append(data)
+            if let s = String(data: stdoutPending, encoding: .utf8) {
+                stdoutPending.removeAll(keepingCapacity: true)
+                if !s.isEmpty { Task { @MainActor in onChunk(s) } }
             }
         }
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty { return }
-            if let s = String(data: data, encoding: .utf8), !s.isEmpty {
-                // Mute benign spinner lines; surface only real errors
-                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty, !trimmed.contains("\u{1B}[") {
-                    Task { @MainActor in onChunk("") } // keep order
+            if let s = String(data: data, encoding: .utf8) {
+                // Strip ANSI escapes (spinners/colors) but keep real error text
+                // so we can surface it when the process exits non-zero.
+                let cleaned = s.replacingOccurrences(
+                    of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression
+                )
+                if !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    stderrAccum += cleaned
                 }
             }
         }
@@ -274,10 +291,21 @@ enum AIRun {
         task.terminationHandler = { proc in
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
-            let err: Error? = proc.terminationStatus == 0
-                ? nil
-                : NSError(domain: "AIRun", code: Int(proc.terminationStatus),
-                          userInfo: [NSLocalizedDescriptionKey: "CLI \(proc.terminationStatus) koduyla çıktı"])
+            // Flush any trailing buffered bytes.
+            if !stdoutPending.isEmpty,
+               let s = String(data: stdoutPending, encoding: .utf8), !s.isEmpty {
+                Task { @MainActor in onChunk(s) }
+            }
+            let err: Error?
+            if proc.terminationStatus == 0 {
+                err = nil
+            } else {
+                // Surface the actual stderr tail instead of a bare exit code.
+                let detail = stderrAccum.trimmingCharacters(in: .whitespacesAndNewlines)
+                let suffix = detail.isEmpty ? "" : ": " + String(detail.suffix(500))
+                err = NSError(domain: "AIRun", code: Int(proc.terminationStatus),
+                              userInfo: [NSLocalizedDescriptionKey: "CLI exited with code \(proc.terminationStatus)\(suffix)"])
+            }
             Task { @MainActor in onDone(err) }
         }
 
@@ -313,10 +341,12 @@ enum AIRun {
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         req.setValue("application/json", forHTTPHeaderField: "content-type")
 
+        req.timeoutInterval = 45
+
         let messages = history.map { ["role": $0.0, "content": $0.1] }
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": 4096,
             "messages": messages
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -328,9 +358,16 @@ enum AIRun {
                           userInfo: [NSLocalizedDescriptionKey: text])
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
+              let content = json["content"] as? [[String: Any]] else {
+            throw NSError(domain: "AIRun", code: 500,
+                          userInfo: [NSLocalizedDescriptionKey: "Beklenmeyen cevap"])
+        }
+        // Concatenate every text block — 2026 models may prepend a thinking /
+        // tool_use block before the text, so `content.first` isn't reliable.
+        let text = content
+            .compactMap { ($0["type"] as? String) == "text" ? $0["text"] as? String : nil }
+            .joined()
+        guard !text.isEmpty else {
             throw NSError(domain: "AIRun", code: 500,
                           userInfo: [NSLocalizedDescriptionKey: "Beklenmeyen cevap"])
         }
@@ -347,6 +384,7 @@ enum AIRun {
         req.httpMethod = "POST"
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.timeoutInterval = 45
 
         let messages = history.map { ["role": $0.0, "content": $0.1] }
         let body: [String: Any] = [

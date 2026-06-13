@@ -22,7 +22,8 @@ struct Recording: Identifiable, Codable, Equatable {
     var displayName: String { url.lastPathComponent }
 
     static func directory() -> URL {
-        let base = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        let base = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
         let dir = base.appendingPathComponent("NeuraBar Recordings", isDirectory: true)
         if !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -112,8 +113,11 @@ final class RecordingStore: NSObject, ObservableObject {
     private var screenProcess: Process?
     private var currentScreenURL: URL?
     private var currentScreenStart: Date?
+    private var screenStopAt: Date?
 
     private var tickTimer: Timer?
+    private var meterVisible = true
+    private var terminateObserver: NSObjectProtocol?
     private let file = "recordings.json"
 
     override init() {
@@ -123,6 +127,28 @@ final class RecordingStore: NSObject, ObservableObject {
         if let saved = Persistence.load([Recording].self, from: file) {
             self.recordings = saved.filter { FileManager.default.fileExists(atPath: $0.filePath) }
         }
+        // Never leave an orphaned screencapture / open recorder behind if the
+        // app quits (⌘Q or restart) mid-recording.
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.screenProcess?.interrupt()
+            self?.audioRecorder?.stop()
+        }
+    }
+
+    deinit {
+        tickTimer?.invalidate()
+        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
+    }
+
+    /// Driven by `RecordView.onAppear/.onDisappear`. The live audio meter only
+    /// matters while the Record tab is on-screen; when hidden we stop sampling
+    /// `averagePower` and drop the tick from 10Hz to ~2Hz (duration only).
+    func setMeterVisible(_ visible: Bool) {
+        guard visible != meterVisible else { return }
+        meterVisible = visible
+        if isRecordingAudio || isRecordingScreen { scheduleTick() }
     }
 
     // MARK: - Input device enumeration (read-only)
@@ -220,7 +246,10 @@ final class RecordingStore: NSObject, ObservableObject {
         outputPath: String,
         options: RecordingOptions
     ) -> [String] {
-        var args = ["-v", "-x"]
+        // -v = record video. We deliberately do NOT pass -x here: on a video
+        // capture -x suppresses the audio track, which would silently defeat
+        // the "Include microphone" (-g) toggle.
+        var args = ["-v"]
         if options.captureCursor { args.append("-C") }
         if options.includeMicrophone { args.append("-g") }
         switch source {
@@ -271,13 +300,22 @@ final class RecordingStore: NSObject, ObservableObject {
             outputPath: url.path,
             options: options
         )
-        task.standardOutput = Pipe()
-        task.standardError = Pipe()
+        // Discard stdout/stderr (screencapture -v is quiet) so there's no
+        // pipe-buffer to drain or deadlock against.
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        // If screencapture exits on its own (bad args, disk full, the user hit
+        // macOS's own menu-bar stop button), finalize so we don't stay stuck
+        // in the "recording" state forever.
+        task.terminationHandler = { [weak self] _ in
+            DispatchQueue.main.async { self?.finishScreen() }
+        }
         do {
             try task.run()
             screenProcess = task
             currentScreenURL = url
             currentScreenStart = Date()
+            screenStopAt = nil
             isRecordingScreen = true
             startTick()
             lastError = nil
@@ -298,26 +336,35 @@ final class RecordingStore: NSObject, ObservableObject {
 
     func stopScreen() {
         guard isRecordingScreen, let task = screenProcess else { return }
-        // screencapture -v stops cleanly on SIGINT and flushes the file.
+        // Snapshot the stop instant now so the stored duration reflects when
+        // the user actually pressed Stop, not when the file finished flushing.
+        screenStopAt = Date()
+        // screencapture -v stops cleanly on SIGINT and flushes the file. The
+        // terminationHandler will call finishScreen() when it exits; this
+        // delayed call is just a safety net if the handler never fires.
         task.interrupt()
-        // Give it up to ~1.2s to write the file before we snapshot metadata.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.finishScreen()
         }
     }
 
     private func finishScreen() {
+        // Idempotent: whichever of {terminationHandler, stop safety-net timer}
+        // runs first finalizes; the other no-ops.
+        guard isRecordingScreen else { return }
         screenProcess = nil
         let url = currentScreenURL
         let start = currentScreenStart ?? Date()
+        let end = screenStopAt ?? Date()
         currentScreenURL = nil
         currentScreenStart = nil
+        screenStopAt = nil
         isRecordingScreen = false
         stopTickIfIdle()
 
         if let url = url, FileManager.default.fileExists(atPath: url.path) {
             let size = fileSize(at: url)
-            let dur = Date().timeIntervalSince(start)
+            let dur = max(0, end.timeIntervalSince(start))
             let rec = Recording(
                 kind: .screen,
                 filePath: url.path,
@@ -357,19 +404,26 @@ final class RecordingStore: NSObject, ObservableObject {
 
     private func startTick() {
         currentDuration = 0
+        scheduleTick()
+    }
+
+    private func scheduleTick() {
         tickTimer?.invalidate()
-        // 10 Hz while audio is recording so the level meter feels responsive;
-        // 2 Hz otherwise is plenty for the duration counter.
-        let interval = isRecordingAudio ? 0.1 : 0.5
+        // 10 Hz while the audio meter is on-screen so it feels responsive;
+        // otherwise 2 Hz is plenty for the duration counter (and avoids
+        // publishing audioLevel 10×/s to a meter nobody can see).
+        let interval = (isRecordingAudio && meterVisible) ? 0.1 : 0.5
         tickTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.isRecordingAudio, let s = self.currentAudioStart {
                 self.currentDuration = Date().timeIntervalSince(s)
-                self.audioRecorder?.updateMeters()
-                // avgPower is in dB, typical range -60…0. Map to 0…1.
-                let db = self.audioRecorder?.averagePower(forChannel: 0) ?? -60
-                let normalized = max(0, min(1, (db + 60) / 60))
-                self.audioLevel = Float(normalized)
+                if self.meterVisible {
+                    self.audioRecorder?.updateMeters()
+                    // avgPower is in dB, typical range -60…0. Map to 0…1.
+                    let db = self.audioRecorder?.averagePower(forChannel: 0) ?? -60
+                    let normalized = max(0, min(1, (db + 60) / 60))
+                    self.audioLevel = Float(normalized)
+                }
             } else if self.isRecordingScreen, let s = self.currentScreenStart {
                 self.currentDuration = Date().timeIntervalSince(s)
             }
@@ -422,9 +476,29 @@ final class RecordingStore: NSObject, ObservableObject {
 }
 
 extension RecordingStore: AVAudioRecorderDelegate {
+    // AVFoundation may call delegate methods off the main thread — hop before
+    // touching @Published state to avoid a data race / SwiftUI purple warning.
     func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
-        lastError = "Audio encode error: \(error?.localizedDescription ?? "unknown")"
-        isRecordingAudio = false
-        stopTickIfIdle()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.lastError = "Audio encode error: \(error?.localizedDescription ?? "unknown")"
+            self.isRecordingAudio = false
+            self.audioLevel = 0
+            self.stopTickIfIdle()
+        }
+    }
+
+    // Fires if the recorder stops itself (interruption, disk full, device
+    // disconnect). Flip our state so the UI doesn't get stuck "recording".
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isRecordingAudio else { return }
+            if !flag {
+                self.lastError = "Recording stopped unexpectedly."
+                self.isRecordingAudio = false
+                self.audioLevel = 0
+                self.stopTickIfIdle()
+            }
+        }
     }
 }

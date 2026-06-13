@@ -50,6 +50,14 @@ struct RecordView: View {
         }
         .animation(.spring(duration: 0.22, bounce: 0.15), value: store.isRecordingAudio)
         .animation(.spring(duration: 0.22, bounce: 0.15), value: store.isRecordingScreen)
+        .onAppear {
+            permissions.beginObserving()
+            store.setMeterVisible(true)
+        }
+        .onDisappear {
+            permissions.endObserving()
+            store.setMeterVisible(false)
+        }
     }
 
     // MARK: - Primary Start / Stop pills

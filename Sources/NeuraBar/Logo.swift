@@ -33,15 +33,19 @@ struct LogoView: View {
 
     @State private var breathe = false
     @State private var shimmerPhase: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: max(6, size * 0.18)) {
+        // Respect Reduce Motion: this breathing loop otherwise runs forever in
+        // the header of every tab.
+        let shouldAnimate = animated && !reduceMotion
+        return HStack(spacing: max(6, size * 0.18)) {
             mark
                 .frame(width: size, height: size)
-                .scaleEffect(animated && breathe ? 1.03 : 1.0)
-                .animation(animated ? .easeInOut(duration: 2.4).repeatForever(autoreverses: true) : .default,
+                .scaleEffect(shouldAnimate && breathe ? 1.03 : 1.0)
+                .animation(shouldAnimate ? .easeInOut(duration: 2.4).repeatForever(autoreverses: true) : .default,
                            value: breathe)
-                .onAppear { if animated { breathe = true } }
+                .onAppear { if shouldAnimate { breathe = true } }
             if showWordmark {
                 Text("NeuraBar")
                     .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
@@ -166,7 +170,7 @@ struct MenuBarIconView: View {
                 .foregroundStyle(phaseTint(for: pomodoro.phase))
                 .symbolEffect(.variableColor.iterative, options: .repeating)
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
-        } else if let nsImage = Self.templateImage() {
+        } else if let nsImage = Self.templateImage {
             Image(nsImage: nsImage)
                 .transition(.opacity)
         } else {
@@ -184,9 +188,16 @@ struct MenuBarIconView: View {
         }
     }
 
-    /// Render the neural-N glyph to a 20×20 monochrome NSImage flagged as template.
+    /// The neural-N glyph rendered ONCE to a 20×20 monochrome template NSImage.
+    ///
+    /// Critical: this must be a cached `let`, never a function called from
+    /// `body`. Constructing an `ImageRenderer` inside the view body and reading
+    /// `.cgImage` registers an `ImageRendererHost` in the view graph that
+    /// drives a display-link render loop — which re-invokes `body`, which makes
+    /// another `ImageRenderer`… a self-sustaining loop that pegged a CPU core
+    /// (~25%) at idle. The glyph is static, so render it once and reuse it.
     @MainActor
-    private static func templateImage() -> NSImage? {
+    private static let templateImage: NSImage? = {
         let size = CGSize(width: 20, height: 20)
         let renderer = ImageRenderer(content: MenuBarGlyph())
         renderer.scale = 2.0
@@ -195,7 +206,7 @@ struct MenuBarIconView: View {
         let nsImg = NSImage(cgImage: cg, size: size)
         nsImg.isTemplate = true
         return nsImg
-    }
+    }()
 }
 
 // MARK: - Brand ambience

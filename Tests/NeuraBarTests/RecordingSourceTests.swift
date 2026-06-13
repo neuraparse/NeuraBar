@@ -20,7 +20,8 @@ final class ScreencaptureArgumentsTests: XCTestCase {
             options: opts
         )
         XCTAssertTrue(args.contains("-v"))
-        XCTAssertTrue(args.contains("-x"))
+        XCTAssertFalse(args.contains("-x"),
+                       "-x suppresses the audio track and conflicts with -g (mic) on video capture")
         XCTAssertTrue(args.contains("-C"))
         XCTAssertTrue(args.contains("-g"))
         XCTAssertFalse(args.contains("-i"),

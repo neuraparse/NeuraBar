@@ -82,6 +82,25 @@ enum Persistence {
             try? data.write(to: url, options: .atomic)
         }
     }
+
+    /// Serial queue for off-main encoding + atomic writes. Keeps JSON
+    /// serialization of large stores (notes bodies, long clipboard / AI
+    /// histories) off the UI thread — the encode used to run inside a
+    /// `@Published didSet` on the main run loop.
+    private static let ioQueue = DispatchQueue(label: "com.neuraparse.neurabar.persistence", qos: .utility)
+
+    /// Background-thread variant of `save`. Resolves the destination URL on
+    /// the calling thread (so the `overrideDir`/`userDir` snapshot is the one
+    /// in effect at call time), then encodes + writes on a utility queue.
+    /// Used by the high-frequency debounced stores.
+    static func saveAsync<T: Encodable>(_ value: T, to file: String) {
+        let url = supportDir.appendingPathComponent(file)
+        ioQueue.async {
+            if let data = try? JSONEncoder().encode(value) {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
 }
 
 /// Tiny Kotlin-style `also` on URL so we can create-on-access inline.
@@ -94,9 +113,9 @@ private extension URL {
 
 struct SettingsStoreData: Codable {
     var claudeAPIKey: String = ""
-    var claudeModel: String = "claude-sonnet-4-5"
+    var claudeModel: String = "claude-sonnet-4-6"
     var openaiAPIKey: String = ""
-    var openaiModel: String = "gpt-4o-mini"
+    var openaiModel: String = "gpt-5.4-mini"
     var ollamaModel: String = "llama3.2"
     var preferredProviderID: String = ""
     var accentColorHex: String = "#7C3AED"
@@ -109,9 +128,9 @@ struct SettingsStoreData: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         claudeAPIKey = (try? c.decode(String.self, forKey: .claudeAPIKey)) ?? ""
-        claudeModel = (try? c.decode(String.self, forKey: .claudeModel)) ?? "claude-sonnet-4-5"
+        claudeModel = (try? c.decode(String.self, forKey: .claudeModel)) ?? "claude-sonnet-4-6"
         openaiAPIKey = (try? c.decode(String.self, forKey: .openaiAPIKey)) ?? ""
-        openaiModel = (try? c.decode(String.self, forKey: .openaiModel)) ?? "gpt-4o-mini"
+        openaiModel = (try? c.decode(String.self, forKey: .openaiModel)) ?? "gpt-5.4-mini"
         ollamaModel = (try? c.decode(String.self, forKey: .ollamaModel)) ?? "llama3.2"
         preferredProviderID = (try? c.decode(String.self, forKey: .preferredProviderID)) ?? ""
         accentColorHex = (try? c.decode(String.self, forKey: .accentColorHex)) ?? "#7C3AED"
@@ -284,7 +303,7 @@ struct SettingsSheet: View {
                     key: $tempClaudeKey,
                     keyPlaceholder: "sk-ant-...",
                     model: $tempClaudeModel,
-                    modelPlaceholder: "claude-sonnet-4-5",
+                    modelPlaceholder: "claude-sonnet-4-6",
                     linkURL: URL(string: "https://console.anthropic.com/settings/keys")!
                 )
 
@@ -295,7 +314,7 @@ struct SettingsSheet: View {
                     key: $tempOpenAIKey,
                     keyPlaceholder: "sk-...",
                     model: $tempOpenAIModel,
-                    modelPlaceholder: "gpt-4o-mini",
+                    modelPlaceholder: "gpt-5.4-mini",
                     linkURL: URL(string: "https://platform.openai.com/api-keys")!
                 )
 
@@ -513,9 +532,9 @@ struct SettingsSheet: View {
 
     private func saveAI() {
         settings.data.claudeAPIKey = tempClaudeKey
-        settings.data.claudeModel = tempClaudeModel.isEmpty ? "claude-sonnet-4-5" : tempClaudeModel
+        settings.data.claudeModel = tempClaudeModel.isEmpty ? "claude-sonnet-4-6" : tempClaudeModel
         settings.data.openaiAPIKey = tempOpenAIKey
-        settings.data.openaiModel = tempOpenAIModel.isEmpty ? "gpt-4o-mini" : tempOpenAIModel
+        settings.data.openaiModel = tempOpenAIModel.isEmpty ? "gpt-5.4-mini" : tempOpenAIModel
         settings.data.ollamaModel = tempOllamaModel.isEmpty ? "llama3.2" : tempOllamaModel
     }
 }

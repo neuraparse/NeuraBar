@@ -18,25 +18,46 @@ final class PermissionsStore: ObservableObject {
 
     private var lastScreenRecording: PermissionState
     private var refreshTimer: Timer?
+    private var observerCount = 0
 
     init() {
         let initial = PermissionsService.screenRecording
         self.screenRecording = initial
         self.lastScreenRecording = initial
         self.microphone = PermissionsService.microphone
-        // TCC doesn't emit notifications when the user flips a toggle in
-        // System Settings, so we poll. Timer runs on the main run loop and
-        // weak-captures self — safer than a Task loop.
-        startPolling()
+        // No polling at launch. TCC state only matters while a permission
+        // banner is on-screen, so polling is demand-driven via
+        // begin/endObserving() — otherwise this woke the CPU ~40×/min for the
+        // whole app lifetime even if Record was never opened.
     }
 
     deinit {
         refreshTimer?.invalidate()
     }
 
+    /// Called from `RecordView.onAppear`. Refreshes immediately and starts the
+    /// poll loop if it isn't already running. Reference-counted so nested
+    /// observers (multiple banners) don't stop it prematurely.
+    func beginObserving() {
+        observerCount += 1
+        refresh()
+        if refreshTimer == nil { startPolling() }
+    }
+
+    /// Called from `RecordView.onDisappear`. Stops polling once the last
+    /// observer goes away.
+    func endObserving() {
+        observerCount = max(0, observerCount - 1)
+        if observerCount == 0 {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+        }
+    }
+
     private func startPolling() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        // 3s is plenty — System Settings toggles are human-speed.
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             // Timer fires on the main run loop but the block isn't
             // MainActor-isolated by default; hop explicitly.
             Task { @MainActor in self?.refresh() }

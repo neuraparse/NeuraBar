@@ -181,11 +181,16 @@ final class ShortcutStore: ObservableObject {
     }
 
     func add(_ item: ShortcutItem) { items.append(item) }
-    func remove(_ item: ShortcutItem) { items.removeAll { $0.id == item.id } }
+    func remove(_ item: ShortcutItem) {
+        ShortcutStore.invalidateIconCache(path: item.path)
+        items.removeAll { $0.id == item.id }
+    }
 
     /// In-place field update used by the edit sheet.
     func update(_ item: ShortcutItem) {
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            ShortcutStore.invalidateIconCache(path: items[idx].path)
+            ShortcutStore.invalidateIconCache(path: item.path)
             items[idx] = item
         }
     }
@@ -291,13 +296,36 @@ final class ShortcutStore: ObservableObject {
     // MARK: - Icon fetching
 
     /// Returns an NSImage for app / folder shortcuts, backed by the real file
-    /// system icon (app icon or folder custom icon). Pure function — safe for
-    /// tests that pass synthetic paths.
+    /// system icon (app icon or folder custom icon). Cached by path — this is
+    /// called from `ShortcutTile.body`, which re-renders on every hover / drag
+    /// / launch-count bump, and `NSWorkspace.icon(forFile:)` does a Launch
+    /// Services lookup each time. Safe for tests that pass synthetic paths.
+    private static var iconCache: [String: NSImage] = [:]
+    private static let iconCacheLock = NSLock()
+
     static func systemIcon(for item: ShortcutItem) -> NSImage? {
         guard item.kind == .app || item.kind == .folder else { return nil }
         let fm = FileManager.default
         guard fm.fileExists(atPath: item.path) else { return nil }
-        return NSWorkspace.shared.icon(forFile: item.path)
+        iconCacheLock.lock()
+        if let cached = iconCache[item.path] {
+            iconCacheLock.unlock()
+            return cached
+        }
+        iconCacheLock.unlock()
+        let img = NSWorkspace.shared.icon(forFile: item.path)
+        iconCacheLock.lock()
+        iconCache[item.path] = img
+        iconCacheLock.unlock()
+        return img
+    }
+
+    /// Drop a cached icon (or all) — call when a shortcut's path changes or is
+    /// removed so a replaced app picks up a fresh icon.
+    static func invalidateIconCache(path: String? = nil) {
+        iconCacheLock.lock()
+        if let path { iconCache[path] = nil } else { iconCache.removeAll() }
+        iconCacheLock.unlock()
     }
 }
 

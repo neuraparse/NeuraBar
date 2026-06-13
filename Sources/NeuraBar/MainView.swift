@@ -152,7 +152,10 @@ struct MainView: View {
 
     private var header: some View {
         HStack(spacing: NB.sp3) {
-            LogoView(size: 22, animated: true)
+            // Static, not breathing: MenuBarExtra keeps the popover content view
+            // alive even when closed, so a repeatForever animation here drove a
+            // continuous SwiftUI redraw loop (~25% CPU at idle).
+            LogoView(size: 22, animated: false)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(l10n.t(.appName))
@@ -168,7 +171,7 @@ struct MainView: View {
                 showPalette = true
             }
             if !isPoppedOut {
-                headerButton(icon: "arrow.up.left.and.arrow.down.right", help: "Open in window") {
+                headerButton(icon: "arrow.up.left.and.arrow.down.right", help: l10n.t(.openInWindow)) {
                     WindowManager.shared.openMainWindow(store: store, l10n: l10n)
                 }
             }
@@ -196,6 +199,9 @@ struct MainView: View {
         .buttonStyle(PressableStyle())
         .nbHoverHighlight(cornerRadius: 6, intensity: 0.1)
         .help(help)
+        // `.help` is a mouse tooltip only — VoiceOver needs an explicit label
+        // for these icon-only buttons.
+        .accessibilityLabel(help)
     }
 
     private var subtitleForTab: String {

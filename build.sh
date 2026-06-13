@@ -8,7 +8,6 @@ cd "$(dirname "$0")"
 
 APP_NAME="NeuraBar"
 APP_BUNDLE="$APP_NAME.app"
-BUILD_DIR=".build/release"
 
 # --- Onkosul kontrolleri ---
 if ! command -v swift >/dev/null 2>&1; then
@@ -26,16 +25,22 @@ echo "✓ $SWIFT_VER"
 
 # --- Build ---
 echo "▶ Derleniyor (release)..."
-# Prefer universal binary if both toolchains are available, otherwise host arch only.
+# Prefer a universal binary if both arches build, otherwise host arch only.
+# A universal build lands in .build/apple/Products/Release — NOT the
+# .build/release symlink — so resolve the real product dir via --show-bin-path
+# instead of hard-coding a path (the old script exit 1'd whenever the universal
+# build succeeded because it looked in the wrong place).
 if swift build -c release --arch arm64 --arch x86_64 >/dev/null 2>&1; then
+    BIN_DIR=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
     echo "✓ Universal binary (arm64 + x86_64)"
 else
     swift build -c release
-    HOST_ARCH=$(uname -m)
-    echo "✓ Host binary ($HOST_ARCH)"
+    BIN_DIR=$(swift build -c release --show-bin-path)
+    echo "✓ Host binary ($(uname -m))"
 fi
 
-if [ ! -f "$BUILD_DIR/$APP_NAME" ]; then
+BIN_PATH="$BIN_DIR/$APP_NAME"
+if [ ! -f "$BIN_PATH" ]; then
     echo "✗ Derleme hatasi. Hata cikisi:"
     swift build -c release 2>&1 | tail -30
     exit 1
@@ -47,7 +52,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
 
 # Copy pre-built bundle icon

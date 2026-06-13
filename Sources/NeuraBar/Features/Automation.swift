@@ -60,7 +60,10 @@ final class AutomationStore: ObservableObject {
     func run(_ def: AutomationDef, l10n: Localization) async {
         runningTaskID = def.id
         let started = Date()
-        let result = await def.action()
+        // Run the (blocking) shell work off the main actor so a long
+        // `find ~`/`du`/`mv` loop can't freeze the UI.
+        let action = def.action
+        let result = await Task.detached(priority: .userInitiated) { await action() }.value
         let finished = Date()
         let run = AutomationRun(
             id: UUID(),
@@ -188,10 +191,18 @@ struct AutomationRow: View {
     @EnvironmentObject var store: AppStore
     @EnvironmentObject var l10n: Localization
     @State private var hover = false
+    @State private var confirming = false
 
     var body: some View {
         Button {
-            Task { await store.automation.run(def, l10n: l10n) }
+            // Destructive automations (empty trash, purge .DS_Store, clean
+            // DerivedData, lock, sleep) require an explicit confirmation —
+            // they used to fire on a single click straight from this tab.
+            if AutomationCatalog.destructiveIDs.contains(def.id) {
+                confirming = true
+            } else {
+                Task { await store.automation.run(def, l10n: l10n) }
+            }
         } label: {
             HStack(spacing: 10) {
                 ZStack {
@@ -229,6 +240,18 @@ struct AutomationRow: View {
         .buttonStyle(PressableStyle())
         .onHover { hover = $0 }
         .disabled(isRunning)
+        .confirmationDialog(
+            l10n.t(.auto_confirm_title),
+            isPresented: $confirming,
+            titleVisibility: .visible
+        ) {
+            Button(l10n.t(def.titleKey), role: .destructive) {
+                Task { await store.automation.run(def, l10n: l10n) }
+            }
+            Button(l10n.t(.cancel), role: .cancel) {}
+        } message: {
+            Text(l10n.t(.auto_confirm_message))
+        }
     }
 }
 
@@ -350,8 +373,13 @@ private func runSh(_ cmd: String) -> (stdout: String, code: Int32) {
     task.standardError = pipe
     do {
         try task.run()
-        task.waitUntilExit()
+        // Read BEFORE waitUntilExit: readDataToEndOfFile() returns once the
+        // child closes its write end (i.e. exits), so this drains the pipe and
+        // waits at the same time. Reading after waiting would deadlock when a
+        // command emits >64KB (e.g. sorting a Downloads folder with thousands
+        // of files): the child blocks on write() while we block in wait().
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
         return (String(data: data, encoding: .utf8) ?? "", task.terminationStatus)
     } catch {
         return ("Error: \(error.localizedDescription)", -1)
@@ -382,6 +410,10 @@ private func stat(_ key: Loc, _ value: String) -> AutomationStat {
 // MARK: - Catalog
 
 enum AutomationCatalog {
+    /// Automations that mutate/destroy state irreversibly or disrupt the
+    /// session — these require an explicit confirmation before running.
+    static let destructiveIDs: Set<String> = ["trash", "dsstore", "derived", "lock", "sleep"]
+
     static let all: [AutomationDef] = [
         // FILES
         .init(id: "screenshots", category: .files, titleKey: .auto_screenshots_title, subtitleKey: .auto_screenshots_sub,
@@ -427,9 +459,12 @@ func organizeScreenshots() async -> ActionResult {
       [ -e "$f" ] || continue
       attr=$(stat -f "%Sm" -t "%Y-%m" "$f")
       mkdir -p "Screenshots/$attr"
-      mv "$f" "Screenshots/$attr/"
-      moved=$((moved+1))
-      echo "→ Screenshots/$attr/$f"
+      if mv -n "$f" "Screenshots/$attr/" 2>/dev/null && [ ! -e "$f" ]; then
+        moved=$((moved+1))
+        echo "→ Screenshots/$attr/$f"
+      else
+        echo "skipped (exists): $f"
+      fi
     done
     echo "__MOVED:$moved"
     """
@@ -450,10 +485,13 @@ func cleanInstallers() async -> ActionResult {
     for f in *.{dmg,pkg,msi,exe}; do
       [ -e "$f" ] || continue
       sz=$(stat -f "%z" "$f" 2>/dev/null || echo 0)
-      size=$((size+sz))
-      mv "$f" _silinecek/
-      moved=$((moved+1))
-      echo "→ _silinecek/$f ($sz bytes)"
+      if mv -n "$f" _silinecek/ 2>/dev/null && [ ! -e "$f" ]; then
+        size=$((size+sz))
+        moved=$((moved+1))
+        echo "→ _silinecek/$f ($sz bytes)"
+      else
+        echo "skipped (exists): $f"
+      fi
     done
     echo "__MOVED:$moved"
     echo "__SIZE:$size"
@@ -488,9 +526,12 @@ func sortDownloads() async -> ActionResult {
         mp3|m4a|wav|flac|aac|ogg)             dest="Audio" ;;
         *) continue ;;
       esac
-      mv "$f" "$dest/"
-      moved=$((moved+1))
-      echo "→ $dest/$f"
+      if mv -n "$f" "$dest/" 2>/dev/null && [ ! -e "$f" ]; then
+        moved=$((moved+1))
+        echo "→ $dest/$f"
+      else
+        echo "skipped (exists): $f"
+      fi
     done
     echo "__MOVED:$moved"
     """
@@ -502,7 +543,9 @@ func sortDownloads() async -> ActionResult {
 }
 
 func cleanDSStore() async -> ActionResult {
-    let (out, code) = runSh("find ~ -name .DS_Store -type f -print -delete 2>/dev/null | wc -l")
+    // -xdev keeps the walk on the home volume — don't descend into mounted
+    // network shares or external drives.
+    let (out, code) = runSh("find ~ -xdev -name .DS_Store -type f -print -delete 2>/dev/null | wc -l")
     let n = Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     return (L.t(.auto_stat_deleted) + ": \(n)",
             [stat(.auto_stat_deleted, "\(n)")],
@@ -564,13 +607,15 @@ func archiveOldDownloads() async -> ActionResult {
     size=0
     while IFS= read -r f; do
       [ -e "$f" ] || continue
-      [ "$f" = "_arsiv" ] && continue
       sz=$(stat -f "%z" "$f" 2>/dev/null || echo 0)
-      size=$((size+sz))
-      mv "$f" _arsiv/
-      moved=$((moved+1))
-      echo "→ _arsiv/$(basename "$f")"
-    done < <(find . -maxdepth 1 -mindepth 1 -mtime +30 -not -name "_*" -not -name ".*")
+      if mv -n "$f" _arsiv/ 2>/dev/null && [ ! -e "$f" ]; then
+        size=$((size+sz))
+        moved=$((moved+1))
+        echo "→ _arsiv/$(basename "$f")"
+      else
+        echo "skipped (exists): $(basename "$f")"
+      fi
+    done < <(find . -maxdepth 1 -mindepth 1 -type f -mtime +30 -not -name "_*" -not -name ".*")
     echo "__MOVED:$moved"
     echo "__SIZE:$size"
     """
@@ -596,7 +641,7 @@ func emptyTrash() async -> ActionResult {
     let script = "osascript -e 'tell application \"Finder\" to empty trash' 2>&1"
     let (out, code) = runSh(script)
     details += out
-    return ("Freed \(humanBytes(totalBytes))",
+    return (L.t(.auto_freed, humanBytes(totalBytes)),
             [stat(.auto_stat_size, humanBytes(totalBytes))],
             details.trimmingCharacters(in: .whitespacesAndNewlines), code != 0)
 }
@@ -605,10 +650,12 @@ func cleanDerivedData() async -> ActionResult {
     let base = NSString(string: "~/Library/Developer/Xcode/DerivedData").expandingTildeInPath
     let size = dirSize(base)
     if !FileManager.default.fileExists(atPath: base) {
-        return ("DerivedData not found", [], "\(base) does not exist.", false)
+        return (L.t(.auto_derivedNotFound), [], "\(base) does not exist.", false)
     }
-    let (out, code) = runSh("rm -rf \(escape(base))/* 2>&1 && echo done")
-    return ("Freed \(humanBytes(size))",
+    // NULL_GLOB so an empty dir doesn't leave a literal `*`; `--` so a stray
+    // filename can't be parsed as an rm option.
+    let (out, code) = runSh("setopt NULL_GLOB; rm -rf -- \(escape(base))/* 2>&1 && echo done")
+    return (L.t(.auto_freed, humanBytes(size)),
             [stat(.auto_stat_size, humanBytes(size))],
             out.trimmingCharacters(in: .whitespacesAndNewlines), code != 0)
 }
@@ -619,19 +666,21 @@ func toggleHiddenFiles() async -> ActionResult {
     let wasShown = (cur == "1" || cur.uppercased() == "TRUE")
     let newValue = wasShown ? "FALSE" : "TRUE"
     let (out, code) = runSh("defaults write com.apple.finder AppleShowAllFiles \(newValue) && killall Finder")
-    return (wasShown ? "Hidden files: OFF" : "Hidden files: ON",
+    return (L.t(wasShown ? .auto_hiddenOff : .auto_hiddenOn),
             [stat(.auto_stat_total, wasShown ? "OFF" : "ON")],
             out, code != 0)
 }
 
 func lockScreen() async -> ActionResult {
-    let (out, code) = runSh("pmset displaysleepnow")
-    return ("Locked", [], out, code != 0)
+    // Genuinely lock (fast-user-switch to login window) rather than just
+    // sleeping the display — that's what "Lock screen" should do.
+    let (out, code) = runSh("/System/Library/CoreServices/Menu\\ Extras/User.menu/Contents/Resources/CGSession -suspend 2>&1")
+    return (L.t(.auto_locked), [], out, code != 0)
 }
 
 func sleepDisplay() async -> ActionResult {
     let (out, code) = runSh("pmset displaysleepnow")
-    return ("Display slept", [], out, code != 0)
+    return (L.t(.auto_displaySlept), [], out, code != 0)
 }
 
 // MARK: - Counter parsing (internal — exercised by tests)
@@ -639,7 +688,7 @@ func sleepDisplay() async -> ActionResult {
 func parseCounter(_ text: String, key: String) -> Int {
     for line in text.split(separator: "\n") {
         if line.hasPrefix("\(key):") {
-            return Int(line.dropFirst(key.count + 1)) ?? 0
+            return Int(line.dropFirst(key.count + 1).trimmingCharacters(in: .whitespaces)) ?? 0
         }
     }
     return 0

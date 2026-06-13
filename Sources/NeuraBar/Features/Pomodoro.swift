@@ -93,6 +93,13 @@ final class PomodoroTimer: ObservableObject {
     // Working state
     var sessionsBeforeLongBreak: Int = 4
     private var currentStart: Date?
+    /// Wall-clock target so the countdown stays accurate across system sleep /
+    /// app backgrounding — a Timer doesn't fire while the lid is shut, so a
+    /// pure tick-decrement would drift by however long the Mac slept.
+    private var targetEnd: Date?
+    /// Completed focus blocks since the last long break — drives long-break
+    /// cadence independently of the lifetime `sessionsCompleted` counter.
+    private var focusSinceLongBreak: Int = 0
     private var timer: Timer?
 
     private struct Config: Codable {
@@ -170,7 +177,8 @@ final class PomodoroTimer: ObservableObject {
             case .idle: return focusMinutes * 60
             }
         }()
-        return 1.0 - Double(remaining) / Double(total)
+        let safeTotal = max(1, total)
+        return min(1.0, max(0.0, 1.0 - Double(remaining) / Double(safeTotal)))
     }
 
     var timeString: String {
@@ -199,6 +207,7 @@ final class PomodoroTimer: ObservableObject {
         phase = .longBreak
         remaining = longBreakMinutes * 60
         currentStart = Date()
+        focusSinceLongBreak = 0   // cadence resets once a long break is taken
         startTimer()
     }
 
@@ -206,6 +215,7 @@ final class PomodoroTimer: ObservableObject {
         running = false
         timer?.invalidate()
         timer = nil
+        targetEnd = nil   // freeze: resume() recomputes from the frozen remaining
     }
 
     func resume() {
@@ -219,25 +229,41 @@ final class PomodoroTimer: ObservableObject {
         remaining = focusMinutes * 60
     }
 
-    /// Skip the current phase — advance the state machine as if it finished.
+    /// Skip the current phase — advance the state machine WITHOUT crediting it
+    /// as a completed session (skipping is abandoning, not finishing).
     func skip() {
         guard phase != .idle else { return }
         remaining = 0
-        phaseFinished()
+        phaseFinished(completed: false)
     }
 
-    /// Extend remaining time by N minutes (capped at 60 per call).
+    /// Extend remaining time by N minutes (capped at 60 per call). No-op while
+    /// idle so it can't inflate the next phase's duration.
     func extend(minutes: Int) {
+        guard phase != .idle else { return }
         let delta = max(0, min(60, minutes)) * 60
         remaining += delta
+        if let end = targetEnd {
+            targetEnd = end.addingTimeInterval(TimeInterval(delta))
+        }
     }
 
     private func startTimer() {
         timer?.invalidate()
         running = true
+        targetEnd = Date().addingTimeInterval(TimeInterval(remaining))
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.remaining > 0 {
+            // Derive remaining from wall-clock so sleep/throttling can't drift it.
+            if let end = self.targetEnd {
+                let rem = Int(end.timeIntervalSinceNow.rounded())
+                if rem > 0 {
+                    self.remaining = rem
+                } else {
+                    self.remaining = 0
+                    self.phaseFinished()
+                }
+            } else if self.remaining > 0 {
                 self.remaining -= 1
             } else {
                 self.phaseFinished()
@@ -245,9 +271,11 @@ final class PomodoroTimer: ObservableObject {
         }
     }
 
-    private func phaseFinished() {
+    private func phaseFinished(completed: Bool = true) {
         pause()
-        if let start = currentStart {
+        let finishedFocus = phase == .focus
+        // Only a naturally-completed phase is recorded as a session.
+        if completed, let start = currentStart {
             sessions.insert(PomodoroSession(
                 phase: phase.rawValue,
                 startedAt: start,
@@ -259,18 +287,20 @@ final class PomodoroTimer: ObservableObject {
         }
         currentStart = nil
 
-        notify(
-            title: phase == .focus ? L.t(.focus_notif_focusDoneTitle) : L.t(.focus_notif_breakDoneTitle),
-            body: phase == .focus ? L.t(.focus_notif_focusDoneBody) : L.t(.focus_notif_breakDoneBody)
-        )
+        if completed {
+            notify(
+                title: phase == .focus ? L.t(.focus_notif_focusDoneTitle) : L.t(.focus_notif_breakDoneTitle),
+                body: phase == .focus ? L.t(.focus_notif_focusDoneBody) : L.t(.focus_notif_breakDoneBody)
+            )
+        }
 
-        let finishedFocus = phase == .focus
-        if finishedFocus {
+        if completed && finishedFocus {
             sessionsCompleted += 1
+            focusSinceLongBreak += 1
             persistConfig()
         }
 
-        let isLong = finishedFocus && (sessionsCompleted % sessionsBeforeLongBreak == 0)
+        let isLong = finishedFocus && (focusSinceLongBreak % sessionsBeforeLongBreak == 0) && focusSinceLongBreak > 0
         if finishedFocus {
             if autoStartBreak {
                 isLong ? startLongBreak() : startShortBreak()

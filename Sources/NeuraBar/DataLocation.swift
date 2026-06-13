@@ -316,10 +316,23 @@ struct DataLocationCard: View {
 
         DispatchQueue.global(qos: .userInitiated).async {
             var copied = 0
+            var migrationFailed = false
             if oldURL.path != newURL.path {
-                copied = (try? DataLocationResolver.migrate(from: oldURL, to: newURL)) ?? 0
+                do {
+                    copied = try DataLocationResolver.migrate(from: oldURL, to: newURL)
+                } catch {
+                    migrationFailed = true
+                }
             }
             DispatchQueue.main.async {
+                guard !migrationFailed else {
+                    // Migration threw partway — do NOT switch the pointer, or the
+                    // app would now read from a half-populated folder and the
+                    // user's data would appear to vanish.
+                    self.migrating = false
+                    self.lastResult = L.t(.data_loc_migrateFailed)
+                    return
+                }
                 Persistence.saveDataLocation(newConfig)
                 Persistence.applyDataLocation(newConfig)
                 self.config = newConfig

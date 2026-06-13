@@ -5,8 +5,8 @@ final class SettingsStoreTests: NBTestCase {
 
     func testDefaultsWhenNoFile() {
         let data = SettingsStoreData()
-        XCTAssertEqual(data.claudeModel, "claude-sonnet-4-5")
-        XCTAssertEqual(data.openaiModel, "gpt-4o-mini")
+        XCTAssertEqual(data.claudeModel, "claude-sonnet-4-6")
+        XCTAssertEqual(data.openaiModel, "gpt-5.4-mini")
         XCTAssertEqual(data.ollamaModel, "llama3.2")
         XCTAssertEqual(data.language, .auto)
         XCTAssertEqual(data.claudeAPIKey, "")
@@ -55,7 +55,7 @@ final class SettingsStoreTests: NBTestCase {
         let data = "{}".data(using: .utf8)!
         let decoded = try JSONDecoder().decode(SettingsStoreData.self, from: data)
         XCTAssertEqual(decoded.claudeAPIKey, "")
-        XCTAssertEqual(decoded.claudeModel, "claude-sonnet-4-5")
+        XCTAssertEqual(decoded.claudeModel, "claude-sonnet-4-6")
         XCTAssertEqual(decoded.language, .auto)
     }
 

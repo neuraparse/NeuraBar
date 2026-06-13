@@ -62,17 +62,41 @@ final class SystemMonitor: ObservableObject {
     private var timer: Timer?
     private var prevCPU: host_cpu_load_info = host_cpu_load_info()
     private var lastAlertLevel: AlertLevel = .ok
+    private var batteryAbsent = false
+    private var active = false
 
     init() {
         self.config = Persistence.load(SystemAlertConfig.self, from: "system_alert_config.json")
             ?? SystemAlertConfig()
     }
 
+    deinit { timer?.invalidate() }
+
+    /// Sampling cadence. While the System tab is visible we sample at 3s for
+    /// responsive cards; when hidden we drop to 15s — still frequent enough to
+    /// drive the menu-bar alert glyph, but lets the process nap between ticks
+    /// instead of waking the CPU 20×/min forever.
+    static func sampleInterval(active: Bool) -> TimeInterval { active ? 3.0 : 15.0 }
+
     func start() {
-        timer?.invalidate()
         _ = readCPU() // prime
         tick()
-        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        scheduleTimer()
+    }
+
+    /// Driven by `SystemView.onAppear` / `.onDisappear`.
+    func setActive(_ active: Bool) {
+        guard active != self.active else { return }
+        self.active = active
+        if active { tick() } // immediate refresh when the tab opens
+        scheduleTimer()
+    }
+
+    private func scheduleTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(
+            withTimeInterval: Self.sampleInterval(active: active), repeats: true
+        ) { [weak self] _ in
             self?.tick()
         }
     }
@@ -234,10 +258,15 @@ final class SystemMonitor: ObservableObject {
     }
 
     private func readBattery() -> (level: Int, charging: Bool) {
+        // Desktops never grow a battery — once the IOKit query comes back
+        // empty, stop paying for the (priciest) power-source snapshot on every
+        // tick.
+        if batteryAbsent { return (-1, false) }
         guard let snap = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let sources = IOPSCopyPowerSourcesList(snap)?.takeRetainedValue() as? [CFTypeRef],
               let ps = sources.first,
               let info = IOPSGetPowerSourceDescription(snap, ps)?.takeUnretainedValue() as? [String: Any] else {
+            batteryAbsent = true
             return (-1, false)
         }
         let cur = info[kIOPSCurrentCapacityKey as String] as? Int ?? -1
@@ -293,6 +322,10 @@ struct SystemView: View {
             Spacer()
         }
         .animation(.spring(duration: 0.22, bounce: 0.15), value: showThresholds)
+        // Sample fast while this tab is on-screen; the monitor falls back to a
+        // slow background cadence when it's hidden.
+        .onAppear { mon.setActive(true) }
+        .onDisappear { mon.setActive(false) }
     }
 
     // MARK: - Status header
