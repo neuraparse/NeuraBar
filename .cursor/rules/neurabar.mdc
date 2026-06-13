@@ -1,0 +1,23 @@
+---
+description: NeuraBar project conventions — canonical rules live in AGENTS.md
+alwaysApply: true
+---
+
+# NeuraBar (Cursor rules)
+
+The canonical, cross-tool instructions live in [AGENTS.md](mdc:AGENTS.md) — read
+it first. It covers build/test, conventions, ad-hoc-signing limits, and commit
+rules. This file only restates the rules Cursor most often trips on.
+
+- **Never ship build warnings.** A clean `./build.sh` is the baseline; the
+  292-test suite must stay green.
+- Author commits as **Bayram Eker** `<eker600@gmail.com>` — **never** add a
+  Claude / AI co-author line.
+- **No in-app toasts** — user feedback flashes the menu-bar icon (~1.4s).
+- Codable stores need **tolerant decoders**; never break JSON already on disk.
+- macOS APIs needing a real bundle must guard with
+  `Bundle.main.bundlePath.hasSuffix(".app")` (the xctest runner has no `.app`).
+- Zero external dependencies — don't reach for a package; the answer is in Foundation/SwiftUI.
+
+Architecture map: [docs/ARCHITECTURE.md](mdc:docs/ARCHITECTURE.md).
+Before ending a substantial session, update [docs/HANDOFF.md](mdc:docs/HANDOFF.md).

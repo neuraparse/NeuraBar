@@ -1,0 +1,19 @@
+---
+description: NeuraBar test-suite rules (scoped to the test target)
+globs: Tests/NeuraBarTests/**/*.swift
+alwaysApply: false
+---
+
+# NeuraBar tests
+
+- Any test that touches `Persistence` **must** inherit from `NBTestCase` — it
+  redirects `Persistence.overrideDir` to a temp dir so the real data store is
+  never mutated.
+- New `Loc` keys must be added to `LocalizationTests`'s `allCases` list and have
+  an English translation (`testEveryLocKeyHasEnglishTranslation` guards this).
+- macOS-API calls needing a real `.app` bundle must stay guarded with
+  `Bundle.main.bundlePath.hasSuffix(".app")` — the xctest runner crashes otherwise.
+- Run the suite with full Xcode:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`.
+
+Full inventory: [docs/TESTING.md](mdc:docs/TESTING.md).

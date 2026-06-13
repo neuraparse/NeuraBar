@@ -17,8 +17,6 @@ Package.resolved
 # Logs / local state
 *.log
 dist/NeuraBar-*.zip
-CLAUDE.md
 .gitignore
-docs
 .claude/agents/neurabar-expert.md
 .claude/agents/neurabar-releaser.md
